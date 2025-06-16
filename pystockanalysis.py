@@ -253,16 +253,69 @@ def get_optimized_trendlines(start_index, end_index, precision=0.000001, input_d
 
 #======================================================
 
+
+top_50_SandP_stocks = {
+    "MSFT": "Microsoft Corporation",
+    "NVDA": "NVIDIA Corporation",
+    "AAPL": "Apple Inc.",
+    "AMZN": "Amazon.com, Inc.",
+    "GOOG": "Alphabet Inc. (Class C)",
+    "GOOGL": "Alphabet Inc. (Class A)",
+    "META": "Meta Platforms, Inc.",
+    "AVGO": "Broadcom Inc.",
+    "BRK.B": "Berkshire Hathaway Inc. (Class B)",
+    "TSLA": "Tesla, Inc.",
+    "WMT": "Walmart Inc.",
+    "JPM": "JPMorgan Chase & Co.",
+    "LLY": "Eli Lilly and Company",
+    "V": "Visa Inc.",
+    "ORCL": "Oracle Corporation",
+    "NFLX": "Netflix, Inc.",
+    "MA": "Mastercard Incorporated",
+    "XOM": "Exxon Mobil Corporation",
+    "COST": "Costco Wholesale Corporation",
+    "JNJ": "Johnson & Johnson",
+    "PG": "The Procter & Gamble Company",
+    "HD": "The Home Depot, Inc.",
+    "ABBV": "AbbVie Inc.",
+    "BAC": "Bank of America Corporation",
+    "PLTR": "Palantir Technologies Inc.",
+    "KO": "The Coca-Cola Company",
+    "PM": "Philip Morris International Inc.",
+    "UNH": "UnitedHealth Group Incorporated",
+    "TMUS": "T-Mobile US, Inc.",
+    "CVX": "Chevron Corporation",
+    "CSCO": "Cisco Systems, Inc.",
+    "GE": "General Electric Company",
+    "IBM": "International Business Machines Corporation",
+    "CRM": "Salesforce, Inc.",
+    "ABT": "Abbott Laboratories",
+    "WFC": "Wells Fargo & Company",
+    "LIN": "Linde plc",
+    "MCD": "McDonald's Corporation",
+    "DIS": "The Walt Disney Company",
+    "INTU": "Intuit Inc.",
+    "MS": "Morgan Stanley",
+    "MRK": "Merck & Co., Inc.",
+    "NOW": "ServiceNow, Inc.",
+    "T": "AT&T Inc.",
+    "AXP": "American Express Company",
+    "ACN": "Accenture plc",
+    "RTX": "RTX Corporation",
+    "AMD": "Advanced Micro Devices, Inc.",
+    "ISRG": "Intuitive Surgical, Inc.",
+    "VZ": "Verizon Communications Inc."
+}
+
+element_side_margins_1 = '65px'         # left and right margins for elements - #1
+max_dropdown_width = '300px'  # max width of the dropdown menu
+default_stock = 'NVDA'  #Default stock name
+selected_stock = "NVDA"  # Default selected stock ticker
+
 stock_name = "OTP.BD"  # Example stock ticker
-#stock_name = "AAPL"  # Example: Apple Inc.
-#stock_name = "GOOGL"  # Example: Alphabet Inc. (Google)
-#stock_name = "MSFT"  # Example: Microsoft Corporation
-#stock_name = "TSLA"  # Example: Tesla Inc.
-#stock_name = "BTC-USD"  # Example: Amazon.com Inc.
 
-
-# Fetch historical data for Apple Inc. (AAPL)
-ticker = yf.Ticker(stock_name)
+# Fetch historical data for stock
+ticker = yf.Ticker(default_stock)
 hist = ticker.history(period="1y")  # 1 year of historical data
 
 
@@ -288,17 +341,23 @@ candlestick_fig.add_trace(go.Candlestick(
     name='Candlestick'
 ))
 candlestick_fig.update_layout(
-    title=f"{stock_name} Stock Price - Last 1 Year",
+    title=f"{default_stock} Stock Price - Last 1 Year",
     xaxis_title='Date',
     yaxis_title='Price',
     legend=dict(
         orientation="h",
         x=0.5,
-        y=1.2,
+        y=1.35,
         xanchor='center',
-        yanchor='top'
+        yanchor='top',
+        font=dict(
+            size=11,
+        ),
     )
 )
+
+# Checkbox list for indicators
+Indicator_list = ['Moving Average 1', 'Moving Average 2', 'Trendlines', 'Bollinger Bands']
 
 # =============================== Create RSI figure ========================
 rsi_fig = go.Figure()
@@ -312,29 +371,39 @@ macd_fig.add_trace(go.Scatter(x=hist.index, y=hist['Signal'], mode='lines', name
 macd_fig.update_layout(title='MACD', xaxis_title='Date', yaxis_title='Value')
 
 # ======================= Create a Dash application layout =================
-app.layout = html.Div([
-    html.H1("OTP.BD Stock Price - Last 1 Year"),
-    dcc.Store(id='trendline-points', data=[]),  # Store for clicked points
-    dcc.Checklist(
-        id='show-trendline',
-        options=[{'label': 'Show Trendline', 'value': 'show'}],
-        value=[],
-        style={'margin': '10px'}
+app.layout = html.Div([   
+    html.Div([
+        dcc.Dropdown(
+            id='stock-dropdown',
+            options=top_50_SandP_stocks,
+            value=default_stock, # Default value set
+            placeholder="Select a stock",
+        ),
+        ],
+    style={'margin-left': element_side_margins_1, 'margin-right': element_side_margins_1, 'maxWidth': max_dropdown_width, 'margin-bottom': '20px'},
     ),
-    dcc.Graph(
-        id='stock-chart',
-        figure= candlestick_fig,
-    ),
-    dcc.RangeSlider(
-        id='date-range-slider',
-        min=0,
-        max=len(hist.index) - 1,
-        value=[0, len(hist.index) - 1],
-        marks={i: hist.index[i].strftime('%Y-%m-%d') for i in range(0, len(hist.index), max(1, len(hist.index)//10))},
-        step=1,
-        allowCross=False,
-        tooltip={"placement": "bottom", "always_visible": True},
-        updatemode='mouseup',
+    #html.H1([f"{top_50_SandP_stocks[default_stock]} Stock Price - Last 1 Year"], id='stock-title'),
+    html.Div([
+        dcc.Store(id='trendline-points', data=[]),  # Store for clicked points
+        dcc.Checklist(Indicator_list, id='indicator-checklist', inline=True, inputStyle={'margin-right': '10px'}, labelStyle={'display': 'inline-block', 'margin-right': '20px'}, style={'margin-left': '80px'}),
+        dcc.Graph(
+            id='stock-chart',
+            figure= candlestick_fig,
+        ),
+    ]),
+    html.Div([
+        dcc.RangeSlider(
+            id='date-range-slider',
+            min=0,
+            max=len(hist.index) - 1,
+            value=[0, len(hist.index) - 1],
+            marks={i: hist.index[i].strftime('%Y-%m-%d') for i in range(0, len(hist.index), max(1, len(hist.index)//10))},
+            step=1,
+            allowCross=False,
+            tooltip={"placement": "bottom", "always_visible": True},
+            updatemode='mouseup',
+        ), ],
+    style={'margin-left': element_side_margins_1, 'margin-right': element_side_margins_1},
     ),
     html.Div(id='slider-date-label', style={'margin': '10px', 'fontWeight': 'bold'}),
     dcc.Graph(
@@ -358,17 +427,34 @@ def update_slider_date_label(value):
     end_date = hist.index[end_idx].strftime('%Y-%m-%d')
     return f"Selected range: {start_date} to {end_date}"
 
-
 # ================================ Callback to update the charts ======================
 @app.callback(
     Output('stock-chart', 'figure'),
     Output('rsi-chart', 'figure'),
     Output('macd-chart', 'figure'),
-    Input('trendline-points', 'data'),
-    Input('show-trendline', 'value'),
+    Input('stock-dropdown', 'value'),
+    Input('indicator-checklist', 'value'),
     Input('date-range-slider', 'value')
 )
-def update_chart(points, show_trendline, slider_value):
+def update_chart(stock, indicators_selected, slider_value):
+
+    global selected_stock, hist, candlestick_fig, rsi_fig, macd_fig
+
+    if stock != selected_stock:
+        # Fetch new historical data for the selected stock
+        ticker = yf.Ticker(stock)
+        hist = ticker.history(period="1y")
+        selected_stock = stock  # Update the selected stock
+        #Todo: rework updating Chart since its not the proper way to do it
+        candlestick_fig = go.Candlestick(
+            x=hist.index,
+            open=hist['Open'],
+            high=hist['High'],
+            low=hist['Low'],
+            close=hist['Close'],
+            name='Candlestick'
+        )
+
     start_idx, end_idx = slider_value
     start_date = hist.index[start_idx]
     end_date = hist.index[end_idx]
@@ -428,6 +514,7 @@ def update_chart(points, show_trendline, slider_value):
     #update candlestick chart with the selected date range lines
     cp_stock_fig = go.Figure(candlestick_fig)  # Create a copy to avoid modifying the original
     cp_stock_fig.update_layout(
+        title=f"{selected_stock} Stock Price - Last 1 Year",
         shapes=[
             dict(
                 type="line",
@@ -452,82 +539,141 @@ def update_chart(points, show_trendline, slider_value):
         ]
     )
 
-    # Calculate and show the trendline if the checkbox is selected
-    if show_trendline == ['show']:
-        # Calculate and plot the fast trendline
-        x_trend, y_trend = fast_trendline(hist, start_idx, end_idx)
-        if x_trend and y_trend:
+    if indicators_selected != None or stock != selected_stock:
+        #Calculate and plot the first moving average if selected
+        if 'Moving Average 1' in indicators_selected:
+            # Calculate and plot the first moving average (e.g., 20-day)
+            ma1 = hist['Close'].rolling(window=20).mean()
             cp_stock_fig.add_trace(go.Scatter(
-            x=x_trend,
-            y=y_trend,
-            mode='lines',
-            name='Fast Trendline',
-            line=dict(color='orange', width=1)
+                x=hist.index,
+                y=ma1,
+                mode='lines',
+                name='Moving Average 1 (20-day)',
+                line=dict(color='blue', width=1)
             ))
 
-        # Calculate and plot the optimized support
-        trendlines = get_optimized_trendlines(start_idx,end_idx , precision=0.1, input_data=hist)
-        if trendlines['support'] is not None:
-            support_trendline = trendlines['support']
-            x_trend = hist.index[start_idx:end_idx + 1]
+        # Calculate and plot the second moving average if selected
+        if 'Moving Average 2' in indicators_selected:
+            # Calculate and plot the second moving average (e.g., 50-day)
+            ma2 = hist['Close'].rolling(window=50).mean()
             cp_stock_fig.add_trace(go.Scatter(
-                x=x_trend,
-                y=support_trendline,
+                x=hist.index,
+                y=ma2,
                 mode='lines',
-                name='Support Trendline',
-                line=dict(color='green', width=1)
-            ))
-        # Calculate and plot the resistance
-        if trendlines['resistance'] is not None:
-            resistance_trendline = trendlines['resistance']
-            x_trend = hist.index[start_idx:end_idx + 1]
-            cp_stock_fig.add_trace(go.Scatter(
-                x=x_trend,
-                y=resistance_trendline,
-                mode='lines',
-                name='Resistance Trendline',
+                name='Moving Average 2 (50-day)',
                 line=dict(color='red', width=1)
             ))
 
-
-        ######################## Prolong the trendlines over the next 20 days after the end date ####################
-        # 1. Calculate the new end index (prolonged, but not past last date)
-        prolonged_end_idx = min(end_idx + 20, len(hist.index) - 1)
-
-        # 2. Get the x-axis values for the prolonged range
-        x_trend_prolonged = hist.index[start_idx:prolonged_end_idx + 1]
-
-        # 3. For plotting, extend the trendline y-values accordingly
-        # If your trendline is calculated as y = slope * x + intercept, recalculate for the extended x
-        n_prolonged = len(x_trend_prolonged)
-        if trendlines['support'] is not None:
-            # Recalculate the trendline for the extended range
-            # Use the same slope and intercept as before
-            support_slope = (trendlines['support'][-1] - trendlines['support'][0]) / (end_idx - start_idx) if end_idx > start_idx else 0
-            support_intercept = trendlines['support'][0]
-            support_trendline_prolonged = [support_slope * i + support_intercept for i in range(n_prolonged)]
-            cp_stock_fig.add_trace(go.Scatter(
-                x=x_trend_prolonged,
-                y=support_trendline_prolonged,
+        # Calculate and show the trendline if the checkbox is selected
+        if 'Trendlines' in indicators_selected:
+            # Calculate and plot the fast trendline
+            x_trend, y_trend = fast_trendline(hist, start_idx, end_idx)
+            if x_trend and y_trend:
+                cp_stock_fig.add_trace(go.Scatter(
+                x=x_trend,
+                y=y_trend,
                 mode='lines',
-                name='Support Trendline (Prolonged)',
-                line=dict(color='green', width=1, dash='dash')
+                name='Fast Trendline',
+                line=dict(color='orange', width=1)
+                ))
+
+            # Calculate and plot the optimized support
+            trendlines = get_optimized_trendlines(start_idx,end_idx , precision=0.1, input_data=hist)
+            if trendlines['support'] is not None:
+                support_trendline = trendlines['support']
+                x_trend = hist.index[start_idx:end_idx + 1]
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=x_trend,
+                    y=support_trendline,
+                    mode='lines',
+                    name='Support Trendline',
+                    line=dict(color='green', width=1)
+                ))
+            # Calculate and plot the resistance
+            if trendlines['resistance'] is not None:
+                resistance_trendline = trendlines['resistance']
+                x_trend = hist.index[start_idx:end_idx + 1]
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=x_trend,
+                    y=resistance_trendline,
+                    mode='lines',
+                    name='Resistance Trendline',
+                    line=dict(color='red', width=1)
+                ))
+
+
+            ######################## Prolong the trendlines over the next 20 days after the end date ####################
+            # 1. Calculate the new end index (prolonged, but not past last date)
+            prolonged_end_idx = min(end_idx + 20, len(hist.index) - 1)
+
+            # 2. Get the x-axis values for the prolonged range
+            x_trend_prolonged = hist.index[start_idx:prolonged_end_idx + 1]
+
+            # 3. For plotting, extend the trendline y-values accordingly
+            # If your trendline is calculated as y = slope * x + intercept, recalculate for the extended x
+            n_prolonged = len(x_trend_prolonged)
+            if trendlines['support'] is not None:
+                # Recalculate the trendline for the extended range
+                # Use the same slope and intercept as before
+                support_slope = (trendlines['support'][-1] - trendlines['support'][0]) / (end_idx - start_idx) if end_idx > start_idx else 0
+                support_intercept = trendlines['support'][0]
+                support_trendline_prolonged = [support_slope * i + support_intercept for i in range(n_prolonged)]
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=x_trend_prolonged,
+                    y=support_trendline_prolonged,
+                    mode='lines',
+                    name='Support Trendline (Prolonged)',
+                    line=dict(color='green', width=1, dash='dash')
+                ))
+
+            if trendlines['resistance'] is not None:
+                resistance_slope = (trendlines['resistance'][-1] - trendlines['resistance'][0]) / (end_idx - start_idx) if end_idx > start_idx else 0
+                resistance_intercept = trendlines['resistance'][0]
+                resistance_trendline_prolonged = [resistance_slope * i + resistance_intercept for i in range(n_prolonged)]
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=x_trend_prolonged,
+                    y=resistance_trendline_prolonged,
+                    mode='lines',
+                    name='Resistance Trendline (Prolonged)',
+                    line=dict(color='red', width=1, dash='dash')
+                ))
+            ###########################################################################################
+
+        # Calculate and plot Bollinger Bands if selected
+        if 'Bollinger Bands' in indicators_selected:
+            # Calculate Bollinger Bands
+            window = 20
+            std_dev = hist['Close'].rolling(window=window).std()
+            middle_band = hist['Close'].rolling(window=window).mean()
+            upper_band = middle_band + (std_dev * 2)
+            lower_band = middle_band - (std_dev * 2)
+
+            cp_stock_fig.add_trace(go.Scatter(
+                x=hist.index,
+                y=upper_band,
+                mode='lines',
+                name='Upper Bollinger Band',
+                line=dict(color='purple', width=1, dash='dash')
+            ))
+            cp_stock_fig.add_trace(go.Scatter(
+                x=hist.index,
+                y=middle_band,
+                mode='lines',
+                name='Middle Bollinger Band',
+                line=dict(color='orange', width=1, dash='dash')
+            ))
+            cp_stock_fig.add_trace(go.Scatter(
+                x=hist.index,
+                y=lower_band,
+                mode='lines',
+                name='Lower Bollinger Band',
+                line=dict(color='purple', width=1, dash='dash')
             ))
 
-        if trendlines['resistance'] is not None:
-            resistance_slope = (trendlines['resistance'][-1] - trendlines['resistance'][0]) / (end_idx - start_idx) if end_idx > start_idx else 0
-            resistance_intercept = trendlines['resistance'][0]
-            resistance_trendline_prolonged = [resistance_slope * i + resistance_intercept for i in range(n_prolonged)]
-            cp_stock_fig.add_trace(go.Scatter(
-                x=x_trend_prolonged,
-                y=resistance_trendline_prolonged,
-                mode='lines',
-                name='Resistance Trendline (Prolonged)',
-                line=dict(color='red', width=1, dash='dash')
-            ))
-        ###########################################################################################
+        
 
     return cp_stock_fig, cp_rsi_fig, cp_macd_fig
+
 
 
 # ========================= Run the Dash application =========================
