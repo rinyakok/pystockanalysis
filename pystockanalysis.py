@@ -287,10 +287,81 @@ def calculate_macd(series, short_window=12, long_window=26, signal_window=9):
     signal = macd.ewm(span=signal_window, adjust=False).mean()
     return macd, signal
 
+# Create candlestick figure from input data and title parameters
+def create_candlestick_figure(input_data, title):
+    """ Create a candlestick figure from input data and title parameters.
+    Args:
+        input_data (pd.DataFrame): DataFrame containing 'Open', 'High', 'Low', 'Close' columns.
+        title (str): Title for the candlestick chart."""
+    if input_data.empty:
+        raise ValueError("Input data is empty. Please provide valid historical stock data.")
+    
+    figure = go.Figure()    
+
+    figure.add_trace(go.Candlestick(
+        x=input_data.index,
+        open=input_data['Open'],
+        high=input_data['High'],
+        low=input_data['Low'],
+        close=input_data['Close'],
+        name='Candlestick'
+    ))
+
+    figure.update_layout(
+        title=title,
+        xaxis_title='Date',
+        yaxis_title='Price',
+        legend=dict(
+            orientation="h",
+            x=0.5,
+            y=1.35,
+            xanchor='center',
+            yanchor='top',
+            font=dict(
+                size=11,
+            ),
+        )
+    )
+
+    return figure
+
+# Create a RSI figure from input data and title parameters
+def create_rsi_figure(x_data, RSI_series, title):
+    """ Create a RSI figure from input data and title parameters.
+    Args:
+        input_data (pd.DataFrame): DataFrame containing 'RSI' column.
+        title (str): Title for the RSI chart."""
+    if x_data is None or RSI_series.empty:
+        raise ValueError("Input data is empty. Please provide valid historical stock data with RSI values.")
+    
+    figure = go.Figure()
+    figure.add_trace(go.Scatter(x=x_data, y=RSI_series, mode='lines', name='RSI'))
+    figure.update_layout(title=title, xaxis_title='Date', yaxis_title='RSI')
+
+    return figure
+
+# Create a MACD figure from input data and title parameters
+def create_macd_figure(x_data, macd_series, signal_series, title):
+    """ Create a MACD figure from input data and title parameters.
+    Args:
+        x_data (pd.Index): Index of dates for the x-axis.
+        macd_series (pd.Series): Series containing MACD values.
+        signal_series (pd.Series): Series containing Signal line values.
+        title (str): Title for the MACD chart."""
+    if x_data is None or macd_series.empty or signal_series.empty:
+        raise ValueError("Input data is empty. Please provide valid historical stock data with MACD values.")
+    
+    figure = go.Figure()
+    figure.add_trace(go.Scatter(x=x_data, y=macd_series, mode='lines', name='MACD'))
+    figure.add_trace(go.Scatter(x=x_data, y=signal_series, mode='lines', name='Signal'))
+    figure.update_layout(title=title, xaxis_title='Date', yaxis_title='Value')
+
+    return figure
+
 #======================================================
 
 top_50_SandP_stocks = {
-#    "OTP.BD": "OTP Bank Nyrt.",
+    "OTP.BD": "OTP Bank Nyrt.",
     "MSFT": "Microsoft Corporation",
     "NVDA": "NVIDIA Corporation",
     "AAPL": "Apple Inc.",
@@ -350,56 +421,29 @@ selected_stock = "NVDA"  # Default selected stock ticker
 
 stock_name = "OTP.BD"  # Example stock ticker
 
-# Fetch historical data for stock
-hist = fetch_stock_data(default_stock, period='1y')  # Fetch 1 year of historical data
-
-# Calculate RSI
-hist['RSI'] = calculate_rsi(hist['Close'])
-
-# Calculate MACD
-hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
-
-app = dash.Dash(__name__)
-
 # Checkbox list for indicators
 Indicator_list = ['Moving Average 1', 'Moving Average 2', 'Trendlines', 'Bollinger Bands']
 
+# ================ Fetch historical data and calculate indicators =================
+# Fetch historical data for stock
+hist = fetch_stock_data(default_stock, period='1y')  # Fetch 1 year of historical data
+# Calculate RSI
+hist['RSI'] = calculate_rsi(hist['Close'])
+# Calculate MACD
+hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
+
 # ========================= Create Stock Price Candlestick Chart ============
-candlestick_fig = go.Figure()
-candlestick_fig.add_trace(go.Candlestick(
-    x=hist.index,
-    open=hist['Open'],
-    high=hist['High'],
-    low=hist['Low'],
-    close=hist['Close'],
-    name='Candlestick'
-))
-candlestick_fig.update_layout(
-    title=f"{default_stock} Stock Price - Last 1 Year",
-    xaxis_title='Date',
-    yaxis_title='Price',
-    legend=dict(
-        orientation="h",
-        x=0.5,
-        y=1.35,
-        xanchor='center',
-        yanchor='top',
-        font=dict(
-            size=11,
-        ),
-    )
-)
+candlestick_fig = create_candlestick_figure(hist, f"{default_stock} Stock Price - Last 1 Year")
 
 # =============================== Create RSI figure ========================
-rsi_fig = go.Figure()
-rsi_fig.add_trace(go.Scatter(x=hist.index, y=hist['RSI'], mode='lines', name='RSI'))
-rsi_fig.update_layout(title='RSI (14)', xaxis_title='Date', yaxis_title='RSI')
+rsi_fig = create_rsi_figure(hist.index, hist['RSI'], 'RSI (14)')
 
 # =============================== Create MACD figure =======================
-macd_fig = go.Figure()
-macd_fig.add_trace(go.Scatter(x=hist.index, y=hist['MACD'], mode='lines', name='MACD'))
-macd_fig.add_trace(go.Scatter(x=hist.index, y=hist['Signal'], mode='lines', name='Signal'))
-macd_fig.update_layout(title='MACD', xaxis_title='Date', yaxis_title='Value')
+macd_fig = create_macd_figure(hist.index, hist['MACD'], hist['Signal'], 'MACD (12, 26, 9)')
+
+
+# ================ Create Dash application and layout =================
+app = dash.Dash(__name__)
 
 # ======================= Create a Dash application layout =================
 app.layout = html.Div([   
@@ -458,11 +502,44 @@ def update_slider_date_label(value):
     end_date = hist.index[end_idx].strftime('%Y-%m-%d')
     return f"Selected range: {start_date} to {end_date}"
 
+# @app.callback( 
+#     Output('range-slider', 'max'),
+#     Output('range-slider', 'value'),
+#     Output('range-slider', 'marks'),
+#     Output('stock-chart', 'figure'),
+#     Input('stock-dropdown', 'value')
+# )
+# def update_slider_range(stock):
+#     global selected_stock, hist, candlestick_fig, rsi_fig, macd_fig
+
+#     if stock != selected_stock:
+#         # Fetch new historical data for the selected stock
+#         hist = fetch_stock_data(stock, period='1y')  # Fetch 1 year of historical data
+#         selected_stock = stock  # Update the selected stock
+
+#         # Calculate RSI
+#         hist['RSI'] = calculate_rsi(hist['Close'])
+#         # Calculate MACD
+#         hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
+
+#         cp_stock_fig = create_candlestick_figure(hist, f"{selected_stock} Stock Price - Last 1 Year")
+    
+#         range_slider_max = len(hist.index) - 1
+#         range_slider_value = [0, len(hist.index) - 1]
+#         range_slider_marks = {i: hist.index[i].strftime('%Y-%m-%d') for i in range(0, len(hist.index), max(1, len(hist.index)//10))}
+
+#         return range_slider_max, range_slider_value, range_slider_marks, cp_stock_fig
+
+
+
 # ================================ Callback to update the charts ======================
 @app.callback(
     Output('stock-chart', 'figure'),
     Output('rsi-chart', 'figure'),
     Output('macd-chart', 'figure'),
+    Output('date-range-slider', 'max'),
+    Output('date-range-slider', 'value'),
+    Output('date-range-slider', 'marks'),
     Input('stock-dropdown', 'value'),
     Input('indicator-checklist', 'value'),
     Input('date-range-slider', 'value')
@@ -471,37 +548,37 @@ def update_chart(stock, indicators_selected, slider_value):
 
     global selected_stock, hist, candlestick_fig, rsi_fig, macd_fig
 
-    cp_rsi_fig = go.Figure(rsi_fig)  # Create a copy to avoid modifying the original
-
-    cp_macd_fig = go.Figure(macd_fig)  # Create a copy to avoid modifying the original
-
     if stock != selected_stock:
         # Fetch new historical data for the selected stock
         hist = fetch_stock_data(stock, period='1y')  # Fetch 1 year of historical data
         selected_stock = stock  # Update the selected stock
-        #Todo: rework updating Chart since its not the proper way to do it
-        candlestick_fig = go.Candlestick(
-            x=hist.index,
-            open=hist['Open'],
-            high=hist['High'],
-            low=hist['Low'],
-            close=hist['Close'],
-            name='Candlestick'
-        )
 
         # Calculate RSI
         hist['RSI'] = calculate_rsi(hist['Close'])
         # Calculate MACD
         hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
 
-        # Update RSI, MACD figures with new data
-        cp_rsi_fig.update_traces(go.Scatter(x=hist.index, y=hist['RSI'], mode='lines', name='RSI'))
-        cp_macd_fig.update_traces(go.Scatter(x=hist.index, y=hist['MACD'], mode='lines', name='MACD'))
-        cp_macd_fig.update_traces(go.Scatter(x=hist.index, y=hist['Signal'], mode='lines', name='Signal'))
-
-    start_idx, end_idx = slider_value
+        # Recreate Candlestick, RSI, MACD figures with new data
+        cp_stock_fig = create_candlestick_figure(hist, f"{selected_stock} Stock Price - Last 1 Year")
+        cp_rsi_fig = create_rsi_figure(hist.index, hist['RSI'], 'RSI (14)')
+        cp_macd_fig = create_macd_figure(hist.index, hist['MACD'], hist['Signal'], 'MACD (12, 26, 9)') 
+        #if new stock selected, reset the reange slider indexes.
+        start_idx = 0
+        end_idx = len(hist.index) - 1
+    else:
+        # If the stock is the same, use the existing figures
+        cp_stock_fig = go.Figure(candlestick_fig)  # Create a copy to avoid modifying the original
+        cp_rsi_fig = go.Figure(rsi_fig) # Create a copy to avoid modifying the original
+        cp_macd_fig = go.Figure(macd_fig) # Create a copy to avoid modifying the original
+        # if no new stock selected, get range slider values
+        start_idx, end_idx = slider_value
+ 
     start_date = hist.index[start_idx]
     end_date = hist.index[end_idx]
+
+    # Recalculate range slider values and marks -> this is needed because new stock data may have different index count, therefore range slider shall be updated according to this
+    range_slider_value = [start_idx, end_idx]
+    range_slider_marks = {i: hist.index[i].strftime('%Y-%m-%d') for i in range(0, len(hist.index), max(1, len(hist.index)//10))}
 
     # Update RSI chart with the selected date range lines
     cp_rsi_fig.update_layout(shapes=[
@@ -552,7 +629,6 @@ def update_chart(stock, indicators_selected, slider_value):
     ])
     
     #update candlestick chart with the selected date range lines
-    cp_stock_fig = go.Figure(candlestick_fig)  # Create a copy to avoid modifying the original
     cp_stock_fig.update_layout(
         title=f"{selected_stock} Stock Price - Last 1 Year",
         shapes=[
@@ -591,6 +667,11 @@ def update_chart(stock, indicators_selected, slider_value):
                 name='Moving Average 1 (20-day)',
                 line=dict(color='blue', width=1)
             ))
+        else:
+            #Remove previous Moving Average Trace from figure if there is any with this name 'Moving Average 1 (20-day)'
+            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if trace['name'] != 'Moving Average 1 (20-day)']
+
+
 
         # Calculate and plot the second moving average if selected
         if 'Moving Average 2' in indicators_selected:
@@ -603,6 +684,9 @@ def update_chart(stock, indicators_selected, slider_value):
                 name='Moving Average 2 (50-day)',
                 line=dict(color='red', width=1)
             ))
+        else:
+            #Remove previous Moving Average Trace from figure if there is any with this name 'Moving Average 2 (50-day)'
+            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if trace['name'] != 'Moving Average 2 (50-day)']
 
         # Calculate and show the trendline if the checkbox is selected
         if 'Trendlines' in indicators_selected:
@@ -678,6 +762,9 @@ def update_chart(stock, indicators_selected, slider_value):
                     line=dict(color='red', width=1, dash='dash')
                 ))
             ###########################################################################################
+        else:
+            #Remove previous Trendlines from figure if there is any
+            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if 'Trendline' not in trace['name']]
 
         # Calculate and plot Bollinger Bands if selected
         if 'Bollinger Bands' in indicators_selected:
@@ -709,10 +796,15 @@ def update_chart(stock, indicators_selected, slider_value):
                 name='Lower Bollinger Band',
                 line=dict(color='purple', width=1, dash='dash')
             ))
+        else:
+            #Remove previous Bollinger Bands traces from figure if there is any with name in 'Band'
+            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if 'Band' not in trace['name']]
 
-        
+    candlestick_fig = cp_stock_fig
+    rsi_fig = cp_rsi_fig
+    macd_fig = cp_macd_fig
 
-    return cp_stock_fig, cp_rsi_fig, cp_macd_fig
+    return cp_stock_fig, cp_rsi_fig, cp_macd_fig, end_idx, range_slider_value, range_slider_marks
 
 
 
