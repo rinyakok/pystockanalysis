@@ -253,8 +253,44 @@ def get_optimized_trendlines(start_index, end_index, precision=0.000001, input_d
 
 #======================================================
 
+# Fetch historical stock data using yfinance
+def fetch_stock_data(stock_symbol, period='1y'):
+    """Fetch historical data for a givemn stock 
+        Args:
+        ticker (str): Stock ticker symbol.
+        period (str): Period for which to fetch historical data. Default is '1y' (1 year)."""
+
+    ticker = yf.Ticker(stock_symbol)
+    if ticker is None:
+        raise ValueError(f"Ticker {stock_symbol} not found.")
+    
+    hist_data = ticker.history(period=period)
+
+    if hist_data.empty:
+        raise ValueError(f"No historical data found for ticker: {ticker}")
+    
+    return hist_data
+
+# Calculate the MACD (Moving Average Convergence Divergence) for a given pandas Series.    
+def calculate_macd(series, short_window=12, long_window=26, signal_window=9):
+    """
+    Calculate the MACD (Moving Average Convergence Divergence) for a given pandas Series.
+    :param series: pandas Series of prices
+    :param short_window: Short period for MACD calculation (default is 12)
+    :param long_window: Long period for MACD calculation (default is 26)
+    :param signal_window: Signal line period (default is 9)
+    :return: pandas Series of MACD values and Signal line values
+    """
+    exp1 = series.ewm(span=short_window, adjust=False).mean()
+    exp2 = series.ewm(span=long_window, adjust=False).mean()
+    macd = exp1 - exp2
+    signal = macd.ewm(span=signal_window, adjust=False).mean()
+    return macd, signal
+
+#======================================================
 
 top_50_SandP_stocks = {
+#    "OTP.BD": "OTP Bank Nyrt.",
     "MSFT": "Microsoft Corporation",
     "NVDA": "NVIDIA Corporation",
     "AAPL": "Apple Inc.",
@@ -315,20 +351,18 @@ selected_stock = "NVDA"  # Default selected stock ticker
 stock_name = "OTP.BD"  # Example stock ticker
 
 # Fetch historical data for stock
-ticker = yf.Ticker(default_stock)
-hist = ticker.history(period="1y")  # 1 year of historical data
-
+hist = fetch_stock_data(default_stock, period='1y')  # Fetch 1 year of historical data
 
 # Calculate RSI
 hist['RSI'] = calculate_rsi(hist['Close'])
 
 # Calculate MACD
-exp1 = hist['Close'].ewm(span=12, adjust=False).mean()
-exp2 = hist['Close'].ewm(span=26, adjust=False).mean()
-hist['MACD'] = exp1 - exp2
-hist['Signal'] = hist['MACD'].ewm(span=9, adjust=False).mean()
+hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
 
 app = dash.Dash(__name__)
+
+# Checkbox list for indicators
+Indicator_list = ['Moving Average 1', 'Moving Average 2', 'Trendlines', 'Bollinger Bands']
 
 # ========================= Create Stock Price Candlestick Chart ============
 candlestick_fig = go.Figure()
@@ -355,9 +389,6 @@ candlestick_fig.update_layout(
         ),
     )
 )
-
-# Checkbox list for indicators
-Indicator_list = ['Moving Average 1', 'Moving Average 2', 'Trendlines', 'Bollinger Bands']
 
 # =============================== Create RSI figure ========================
 rsi_fig = go.Figure()
@@ -440,10 +471,13 @@ def update_chart(stock, indicators_selected, slider_value):
 
     global selected_stock, hist, candlestick_fig, rsi_fig, macd_fig
 
+    cp_rsi_fig = go.Figure(rsi_fig)  # Create a copy to avoid modifying the original
+
+    cp_macd_fig = go.Figure(macd_fig)  # Create a copy to avoid modifying the original
+
     if stock != selected_stock:
         # Fetch new historical data for the selected stock
-        ticker = yf.Ticker(stock)
-        hist = ticker.history(period="1y")
+        hist = fetch_stock_data(stock, period='1y')  # Fetch 1 year of historical data
         selected_stock = stock  # Update the selected stock
         #Todo: rework updating Chart since its not the proper way to do it
         candlestick_fig = go.Candlestick(
@@ -455,11 +489,19 @@ def update_chart(stock, indicators_selected, slider_value):
             name='Candlestick'
         )
 
+        # Calculate RSI
+        hist['RSI'] = calculate_rsi(hist['Close'])
+        # Calculate MACD
+        hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
+
+        # Update RSI, MACD figures with new data
+        cp_rsi_fig.update_traces(go.Scatter(x=hist.index, y=hist['RSI'], mode='lines', name='RSI'))
+        cp_macd_fig.update_traces(go.Scatter(x=hist.index, y=hist['MACD'], mode='lines', name='MACD'))
+        cp_macd_fig.update_traces(go.Scatter(x=hist.index, y=hist['Signal'], mode='lines', name='Signal'))
+
     start_idx, end_idx = slider_value
     start_date = hist.index[start_idx]
     end_date = hist.index[end_idx]
-
-    cp_rsi_fig = go.Figure(rsi_fig)  # Create a copy to avoid modifying the original
 
     # Update RSI chart with the selected date range lines
     cp_rsi_fig.update_layout(shapes=[
@@ -486,8 +528,6 @@ def update_chart(stock, indicators_selected, slider_value):
     ])
 
     # Update MACD chart with the selected date range lines
-    cp_macd_fig = go.Figure(macd_fig)  # Create a copy to avoid modifying the original
-
     cp_macd_fig.update_layout(shapes=[
         dict(
             type="line",
