@@ -54,6 +54,7 @@ import dash
 from dash import dcc, html
 import pandas as pd
 import plotly.graph_objs as go
+from plotly.subplots import make_subplots
 import numpy as np
 
 
@@ -261,6 +262,7 @@ def fetch_stock_data(stock_symbol, period='1y'):
         period (str): Period for which to fetch historical data. Default is '1y' (1 year)."""
 
     ticker = yf.Ticker(stock_symbol)
+    
     if ticker is None:
         raise ValueError(f"Ticker {stock_symbol} not found.")
     
@@ -296,16 +298,27 @@ def create_candlestick_figure(input_data, title):
     if input_data.empty:
         raise ValueError("Input data is empty. Please provide valid historical stock data.")
     
-    figure = go.Figure()    
-
-    figure.add_trace(go.Candlestick(
+    candlesticks = go.Candlestick(
         x=input_data.index,
         open=input_data['Open'],
         high=input_data['High'],
         low=input_data['Low'],
         close=input_data['Close'],
         name='Candlestick'
-    ))
+    )
+
+    volume_bars = go.Bar(
+        x=input_data.index,
+        y=input_data['Volume'],
+        showlegend=False,
+        marker={"color":"rgba(128,128,128,0.5)",},
+        name='Volume'
+    )
+        
+    figure = go.Figure(candlesticks)
+    figure = make_subplots(specs=[[{"secondary_y" : True}]]) 
+    figure.add_trace(candlesticks,secondary_y=True)
+    figure.add_trace(volume_bars, secondary_y = False)
 
     figure.update_layout(
         title=title,
@@ -467,6 +480,30 @@ app.layout = html.Div([
         ),
     ]),
     html.Div([
+        dcc.DatePickerSingle(
+            id='start-date',
+            placeholder='Start Date',
+            date=hist.index[0],
+            min_date_allowed=hist.index[0],
+            max_date_allowed=hist.index[len(hist) - 1],
+        ),
+        dcc.DatePickerSingle(
+            id='end-date',
+            placeholder='End Date',
+            date=hist.index[len(hist) - 1],
+            min_date_allowed=hist.index[0],
+            max_date_allowed=hist.index[len(hist) - 1],
+        ) ], 
+        style={
+        'display': 'flex',
+        'justifyContent': 'space-between',
+        'width': '100%',
+        'padding': '0 20px',
+        'margin-left': element_side_margins_1, 
+        'margin-right': '0px',
+        'margin-bottom' : '10px',
+    }),
+    html.Div([
         dcc.RangeSlider(
             id='date-range-slider',
             min=0,
@@ -491,45 +528,46 @@ app.layout = html.Div([
     )
 ])
 
-# ================ Callback to update the date range slider value with date labels instead of index ===========
+# Callback to update Range Slider with the inputs from date select inputs
 @app.callback(
-    Output('slider-date-label', 'children'),
-    Input('date-range-slider', 'value')
+    Output('date-range-slider', 'value', allow_duplicate=True),
+    Input('start-date', 'date'),
+    Input('end-date', 'date'),
+    prevent_initial_call='initial_duplicate'
 )
-def update_slider_date_label(value):
-    start_idx, end_idx = value
-    start_date = hist.index[start_idx].strftime('%Y-%m-%d')
-    end_date = hist.index[end_idx].strftime('%Y-%m-%d')
-    return f"Selected range: {start_date} to {end_date}"
-
-# @app.callback( 
-#     Output('range-slider', 'max'),
-#     Output('range-slider', 'value'),
-#     Output('range-slider', 'marks'),
-#     Output('stock-chart', 'figure'),
-#     Input('stock-dropdown', 'value')
-# )
-# def update_slider_range(stock):
-#     global selected_stock, hist, candlestick_fig, rsi_fig, macd_fig
-
-#     if stock != selected_stock:
-#         # Fetch new historical data for the selected stock
-#         hist = fetch_stock_data(stock, period='1y')  # Fetch 1 year of historical data
-#         selected_stock = stock  # Update the selected stock
-
-#         # Calculate RSI
-#         hist['RSI'] = calculate_rsi(hist['Close'])
-#         # Calculate MACD
-#         hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
-
-#         cp_stock_fig = create_candlestick_figure(hist, f"{selected_stock} Stock Price - Last 1 Year")
+def update_slider_range(start_date_input, end_date_input):
     
-#         range_slider_max = len(hist.index) - 1
-#         range_slider_value = [0, len(hist.index) - 1]
-#         range_slider_marks = {i: hist.index[i].strftime('%Y-%m-%d') for i in range(0, len(hist.index), max(1, len(hist.index)//10))}
+    #Find the index which is closest to start & end date received from date Input field
+    closest_start_date = find_index(start_date_input)
+    closest_end_date = find_index(end_date_input)
+    
+    return [closest_start_date,closest_end_date]
 
-#         return range_slider_max, range_slider_value, range_slider_marks, cp_stock_fig
+def find_index(date):
+    global hist
 
+    #take only date from datetime
+    date = pd.to_datetime(date).date()
+
+    date_idx = 0
+
+    #Loop over indexes
+    for index in range (0,len(hist.index)):
+        #take only date from index's datetime
+        idx_date = hist.index[index].date()
+
+        #If date is greater or equals ti index's date, store current index for next iteration
+        if date >= idx_date:
+            date_idx = index
+        else:
+            #We found a date from index's date which is greater then input date -> return the index of previous element
+            return date_idx
+    
+    #If loop is over, but input date equals to last index's date then this last elemet shall be return
+    if date == idx_date:
+        return index
+    
+    return None
 
 
 # ================================ Callback to update the charts ======================
@@ -540,9 +578,11 @@ def update_slider_date_label(value):
     Output('date-range-slider', 'max'),
     Output('date-range-slider', 'value'),
     Output('date-range-slider', 'marks'),
+    Output('start-date', 'date'),
+    Output('end-date', 'date'),
     Input('stock-dropdown', 'value'),
     Input('indicator-checklist', 'value'),
-    Input('date-range-slider', 'value')
+    Input('date-range-slider', 'value'),
 )
 def update_chart(stock, indicators_selected, slider_value):
 
@@ -564,7 +604,7 @@ def update_chart(stock, indicators_selected, slider_value):
         cp_macd_fig = create_macd_figure(hist.index, hist['MACD'], hist['Signal'], 'MACD (12, 26, 9)') 
         #if new stock selected, reset the reange slider indexes.
         start_idx = 0
-        end_idx = len(hist.index) - 1
+        end_idx = len(hist.index)# - 1
     else:
         # If the stock is the same, use the existing figures
         cp_stock_fig = go.Figure(candlestick_fig)  # Create a copy to avoid modifying the original
@@ -665,8 +705,8 @@ def update_chart(stock, indicators_selected, slider_value):
                 y=ma1,
                 mode='lines',
                 name='Moving Average 1 (20-day)',
-                line=dict(color='blue', width=1)
-            ))
+                line=dict(color='blue', width=1),
+            ),secondary_y=True,),
         else:
             #Remove previous Moving Average Trace from figure if there is any with this name 'Moving Average 1 (20-day)'
             cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if trace['name'] != 'Moving Average 1 (20-day)']
@@ -683,7 +723,7 @@ def update_chart(stock, indicators_selected, slider_value):
                 mode='lines',
                 name='Moving Average 2 (50-day)',
                 line=dict(color='red', width=1)
-            ))
+            ),secondary_y=True,)
         else:
             #Remove previous Moving Average Trace from figure if there is any with this name 'Moving Average 2 (50-day)'
             cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if trace['name'] != 'Moving Average 2 (50-day)']
@@ -699,7 +739,7 @@ def update_chart(stock, indicators_selected, slider_value):
                 mode='lines',
                 name='Fast Trendline',
                 line=dict(color='orange', width=1)
-                ))
+                ),secondary_y=True,)
 
             # Calculate and plot the optimized support
             trendlines = get_optimized_trendlines(start_idx,end_idx , precision=0.1, input_data=hist)
@@ -712,7 +752,7 @@ def update_chart(stock, indicators_selected, slider_value):
                     mode='lines',
                     name='Support Trendline',
                     line=dict(color='green', width=1)
-                ))
+                ),secondary_y=True,)
             # Calculate and plot the resistance
             if trendlines['resistance'] is not None:
                 resistance_trendline = trendlines['resistance']
@@ -723,7 +763,7 @@ def update_chart(stock, indicators_selected, slider_value):
                     mode='lines',
                     name='Resistance Trendline',
                     line=dict(color='red', width=1)
-                ))
+                ),secondary_y=True,)
 
 
             ######################## Prolong the trendlines over the next 20 days after the end date ####################
@@ -748,7 +788,7 @@ def update_chart(stock, indicators_selected, slider_value):
                     mode='lines',
                     name='Support Trendline (Prolonged)',
                     line=dict(color='green', width=1, dash='dash')
-                ))
+                ),secondary_y=True,)
 
             if trendlines['resistance'] is not None:
                 resistance_slope = (trendlines['resistance'][-1] - trendlines['resistance'][0]) / (end_idx - start_idx) if end_idx > start_idx else 0
@@ -760,7 +800,7 @@ def update_chart(stock, indicators_selected, slider_value):
                     mode='lines',
                     name='Resistance Trendline (Prolonged)',
                     line=dict(color='red', width=1, dash='dash')
-                ))
+                ),secondary_y=True,)
             ###########################################################################################
         else:
             #Remove previous Trendlines from figure if there is any
@@ -781,21 +821,21 @@ def update_chart(stock, indicators_selected, slider_value):
                 mode='lines',
                 name='Upper Bollinger Band',
                 line=dict(color='purple', width=1, dash='dash')
-            ))
+            ),secondary_y=True,)
             cp_stock_fig.add_trace(go.Scatter(
                 x=hist.index,
                 y=middle_band,
                 mode='lines',
                 name='Middle Bollinger Band',
                 line=dict(color='orange', width=1, dash='dash')
-            ))
+            ),secondary_y=True,)
             cp_stock_fig.add_trace(go.Scatter(
                 x=hist.index,
                 y=lower_band,
                 mode='lines',
                 name='Lower Bollinger Band',
                 line=dict(color='purple', width=1, dash='dash')
-            ))
+            ),secondary_y=True,)
         else:
             #Remove previous Bollinger Bands traces from figure if there is any with name in 'Band'
             cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if 'Band' not in trace['name']]
@@ -804,7 +844,7 @@ def update_chart(stock, indicators_selected, slider_value):
     rsi_fig = cp_rsi_fig
     macd_fig = cp_macd_fig
 
-    return cp_stock_fig, cp_rsi_fig, cp_macd_fig, end_idx, range_slider_value, range_slider_marks
+    return cp_stock_fig, cp_rsi_fig, cp_macd_fig, len(hist.index), range_slider_value, range_slider_marks, start_date, end_date
 
 
 
