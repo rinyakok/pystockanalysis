@@ -298,6 +298,7 @@ def create_candlestick_figure(input_data, title):
     if input_data.empty:
         raise ValueError("Input data is empty. Please provide valid historical stock data.")
     
+    #Create candlestick
     candlesticks = go.Candlestick(
         x=input_data.index,
         open=input_data['Open'],
@@ -307,23 +308,45 @@ def create_candlestick_figure(input_data, title):
         name='Candlestick'
     )
 
-    volume_bars = go.Bar(
-        x=input_data.index,
-        y=input_data['Volume'],
-        showlegend=False,
-        marker={"color":"rgba(128,128,128,0.5)",},
-        name='Volume'
-    )
-        
-    figure = go.Figure(candlesticks)
-    figure = make_subplots(specs=[[{"secondary_y" : True}]]) 
-    figure.add_trace(candlesticks,secondary_y=True)
-    figure.add_trace(volume_bars, secondary_y = False)
+    #Create (filter out) separate data frames in order to be able to show red & green bars depending on Close/Open price relation
+    green_volume_df = input_data[input_data['Close'] >= input_data['Open']]
+    red_volume_df = input_data[input_data['Close'] < input_data['Open']]
 
+    #Create green volume bars from green volume data frames
+    volume_bars_green = go.Bar(
+        x=green_volume_df.index,
+        y=green_volume_df['Volume'],
+        showlegend=False,
+        marker={"color":"rgba(10,128,10,0.3)",},
+        name='Volume',
+        visible = False
+    )
+
+    #Create red volume bars from red volume data frames
+    volume_bars_red = go.Bar(
+        x=red_volume_df.index,
+        y=red_volume_df['Volume'],
+        showlegend=False,
+        marker={"color":"rgba(128,10,10,0.3)",},
+        name='Volume',
+        visible = False
+    )
+
+    #Create CandleStick figure    
+    figure = go.Figure(candlesticks)
+    #Create sub-plots in order to show more different charts on the same graph -> enable secondary y axis
+    figure = make_subplots(specs=[[{"secondary_y" : True}]]) 
+    #Add candlestick trace to candlestick figure
+    figure.add_trace(candlesticks,secondary_y=True)
+    #Add green and red traces to candlestick figure
+    figure.add_trace(volume_bars_green, secondary_y = False)
+    figure.add_trace(volume_bars_red, secondary_y = False)
+
+    #update figure layout
     figure.update_layout(
         title=title,
         xaxis_title='Date',
-        yaxis_title='Price',
+        yaxis_title='Volume',
         legend=dict(
             orientation="h",
             x=0.5,
@@ -335,6 +358,62 @@ def create_candlestick_figure(input_data, title):
             ),
         )
     )
+
+
+    #xaxes type set to category in order to avoid gaps on charts where there was no trade
+    #Todo: Xaxes labales still have to adjusted because it is not handled automaticaly like if xaxes were date type
+    figure.update_xaxes(type='category', row=1, col=1, dtick=60, tickformat= '%Y-%m-%d', tickangle=0)
+    figure.update_xaxes(type='category', row=2, col=1, dtick=60, tickformat= '%Y-%m-%d', tickangle=0)
+
+
+    # figure.update_xaxes(type='category', row=1, col=1, showticklabels=False)
+    # figure.update_xaxes(type='category', row=2, col=1, showticklabels=False)
+
+    ###figure.update_xaxes(type='category', row=1, col=1, dtick=7, tickmode='sync')
+    ###figure.update_xaxes(type='category', row=2, col=1, dtick=7, tickmode='sync')
+
+    # figure.update_xaxes(type='category', row=2, col=1,
+    #                 tickformat= '%Y-%m-%d',
+    #                 tickmode= 'array',
+    #                 tickvals=hist.index,
+    #                 ticktext=hist.index.strftime('%Y-%m-%d'),
+    #                 tickangle=0,
+    #                 tickfont= {
+    #                     'size': 10
+    #                 },
+    #                 tickson= 'boundaries',
+    #                 ticklen= 10,
+    #                 tickwidth= 2,
+    #                 tickcolor= '#000',
+    #                 automargin= True,
+    #                 side= 'bottom')
+    
+
+    #tickvalues = [idx if idx % max(1, len(input_data.index)//10) == 0 else None for idx in range(len(input_data.index))]
+    #print(tickvalues)
+    
+
+    # figure.update_xaxes(type='category', row=1, col=1,
+    #                 tickformat= '%Y-%m-%d',
+    #                 tickmode= 'array',
+    #                 #tickvals=hist.index,
+    #                 #ticktext=hist.index.strftime('%Y-%m-%d'),
+    #                 tickvals=tickvalues
+    #                 ticktext=tickvalues.index.strftime('%Y-%m-%d'),
+    #                 tickangle=0,
+    #                 tickfont= {
+    #                     'size': 10
+    #                 },
+    #                 tickson= 'boundaries',
+    #                 ticklen= 10,
+    #                 tickwidth= 2,
+    #                 tickcolor= '#000',
+    #                 automargin= True,
+    #                 side= 'bottom')
+
+    
+
+    #figure.update_yaxes(title_text='Price', row=1, col=1)
 
     return figure
 
@@ -435,7 +514,7 @@ selected_stock = "NVDA"  # Default selected stock ticker
 stock_name = "OTP.BD"  # Example stock ticker
 
 # Checkbox list for indicators
-Indicator_list = ['Moving Average 1', 'Moving Average 2', 'Trendlines', 'Bollinger Bands']
+Indicator_list = ['Moving Average 1', 'Moving Average 2', 'Trendlines', 'Bollinger Bands', 'Volume']
 
 # ================ Fetch historical data and calculate indicators =================
 # Fetch historical data for stock
@@ -604,7 +683,7 @@ def update_chart(stock, indicators_selected, slider_value):
         cp_macd_fig = create_macd_figure(hist.index, hist['MACD'], hist['Signal'], 'MACD (12, 26, 9)') 
         #if new stock selected, reset the reange slider indexes.
         start_idx = 0
-        end_idx = len(hist.index)# - 1
+        end_idx = len(hist.index) - 1
     else:
         # If the stock is the same, use the existing figures
         cp_stock_fig = go.Figure(candlestick_fig)  # Create a copy to avoid modifying the original
@@ -708,10 +787,10 @@ def update_chart(stock, indicators_selected, slider_value):
                 line=dict(color='blue', width=1),
             ),secondary_y=True,),
         else:
-            #Remove previous Moving Average Trace from figure if there is any with this name 'Moving Average 1 (20-day)'
-            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if trace['name'] != 'Moving Average 1 (20-day)']
-
-
+            #Search for traces with 'Moving Average 1' in their name and set them to not visible
+            for trace in cp_stock_fig['data']:
+                if 'Moving Average 1' in trace['name']:
+                    trace['visible'] = False
 
         # Calculate and plot the second moving average if selected
         if 'Moving Average 2' in indicators_selected:
@@ -725,11 +804,17 @@ def update_chart(stock, indicators_selected, slider_value):
                 line=dict(color='red', width=1)
             ),secondary_y=True,)
         else:
-            #Remove previous Moving Average Trace from figure if there is any with this name 'Moving Average 2 (50-day)'
-            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if trace['name'] != 'Moving Average 2 (50-day)']
+            #Search for traces with 'Moving Average 2' in their name and set them to not visible
+            for trace in cp_stock_fig['data']:
+                if 'Moving Average 2' in trace['name']:
+                    trace['visible'] = False
 
         # Calculate and show the trendline if the checkbox is selected
         if 'Trendlines' in indicators_selected:
+            #Remove previous Trendlines from figure if there is any
+            #This is needed to avoid multiple trendlines on the same chart e.g. if trendline checkbox is selected and range slider changed
+            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if 'Trendline' not in trace['name']]
+
             # Calculate and plot the fast trendline
             x_trend, y_trend = fast_trendline(hist, start_idx, end_idx)
             if x_trend and y_trend:
@@ -803,8 +888,10 @@ def update_chart(stock, indicators_selected, slider_value):
                 ),secondary_y=True,)
             ###########################################################################################
         else:
-            #Remove previous Trendlines from figure if there is any
-            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if 'Trendline' not in trace['name']]
+            #Search for traces with 'Trendline' in their name and set them to not visible
+            for trace in cp_stock_fig['data']:
+                if 'Trendline' in trace['name']:
+                    trace['visible'] = False
 
         # Calculate and plot Bollinger Bands if selected
         if 'Bollinger Bands' in indicators_selected:
@@ -837,8 +924,21 @@ def update_chart(stock, indicators_selected, slider_value):
                 line=dict(color='purple', width=1, dash='dash')
             ),secondary_y=True,)
         else:
-            #Remove previous Bollinger Bands traces from figure if there is any with name in 'Band'
-            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if 'Band' not in trace['name']]
+            #Search for traces with 'Bollinger Band' in their name and set them to not visible
+            for trace in cp_stock_fig['data']:
+                if 'Bollinger Band' in trace['name']:
+                    trace['visible'] = False
+
+        if 'Volume' in indicators_selected:
+            #Search for traces with 'Volume' in their name and set them to not visible
+            for trace in cp_stock_fig['data']:
+                if 'Volume' in trace['name']:
+                    trace['visible'] = True
+        else:
+            #Search for traces with 'Volume' in their name and set them to visible
+            for trace in cp_stock_fig['data']:
+                if 'Volume' in trace['name']:
+                    trace['visible'] = False
 
     candlestick_fig = cp_stock_fig
     rsi_fig = cp_rsi_fig
