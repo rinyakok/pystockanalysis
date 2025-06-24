@@ -56,261 +56,39 @@ import pandas as pd
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
 import numpy as np
+import stock as st
+
+import logging as logging
 
 
 from dash.dependencies import Input, Output, State
-from scipy.signal import argrelextrema
 
-#======================================================
-# Calculate the Relative Strength Index (RSI) for a given pandas Series.
-def calculate_rsi(series, period=14):
-    """
-    Calculate the Relative Strength Index (RSI) for a given pandas Series.
-    :param series: pandas Series of prices
-    :param period: Number of periods to use for RSI calculation (default is 14)
-    :return: pandas Series of RSI values
-    """
-    delta = series.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-#======================================================
-# Fast trendline calculation
-def fast_trendline(hist, start_index, end_index):
-    """
-    Calculate a fast linear trendline for the 'Close' price between start_index and end_index (inclusive).
-    Returns x (index/dates) and y (trendline values).
-    """
-    sub_hist = hist[start_index:end_index]
-    if len(sub_hist) < 2:
-        return [], []
-    x = np.arange(len(sub_hist))
-    y = sub_hist['Close'].values
-    coef = np.polyfit(x, y, 1)
-    trend_y = coef[0] * x + coef[1]
-    return list(sub_hist.index), list(trend_y)
-
-
-#======================================================
-# Find the most extreme point (support or resistance) in the data
-# Example usage:
-# support_point = find_extreme_point('support', hist.tail(30), np.array(y_trend))
-# resistance_point = find_extreme_point('resistance', hist.tail(30), np.array(y_trend))
-def find_extreme_point(type, input_data, trendline):
-    """
-    Finds the most extreme point (support or resistance) in the input_data based on the trendline.
-    For 'support', it finds the lowest point in input_data that is closest to the trendline.
-    For 'resistance', it finds the highest point in input_data that is closest to the trendline.
-    Returns the index, value, and distance of the extreme point.
-    """
-    if type == 'support':
-        diffs = trendline - input_data['Low'].values
-        idx = np.argmax(diffs)
-        return input_data.index[idx], input_data['Low'].iloc[idx], diffs[idx]
-    elif type == 'resistance':
-        diffs = input_data['High'].values - trendline
-        idx = np.argmax(diffs)
-        return input_data.index[idx], input_data['High'].iloc[idx], diffs[idx]
-    else:
-        return None
-    
-#======================================================
-# Count how many chart points are intersected by the trendline.
-# This function is used to count the number of intersections between the trendline and the chart points.
-def count_trendline_intersections(trendline, input_data, precision, type):
-    """
-    Count how many chart points (High or Low) are intersected by the trendline.
-    :param trendline: The trendline values (numpy array or list).
-    :param input_data: The input data containing 'High' or 'Low' values.
-    :param precision: The precision for counting intersections.
-    :param type: 'support' or 'resistance' to determine which values to compare against.
-    :return: The count of intersections.
-    """  
-    count = 0
-    if type == 'support':
-        values = input_data['Low'].values
-    elif type == 'resistance':
-        values = input_data['High'].values
-    else:
-        return 0
-
-    for i in range(len(trendline)):
-        if abs(trendline[i] - values[i]) <= precision:
-            count += 1
-    return count
-
-#======================================================
-# Optimize the trendline intersections
-def optimize_trendline_intersections(type, slope, extreme_point_idx, start_index, end_index, input_data, precision=0.000001, max_iter=100):
-    """
-    Iteratively adjust the slope of a trendline through the extreme point (by index) to minimize the distance
-    to the closest Low (for support) or High (for resistance) value.
-    param type: 'support' or 'resistance'.
-    param slope: Initial slope of the trendline.
-    param extreme_point_idx: Index of the extreme point in the input_data.
-    param start_index: Start index for the sub-histogram.
-    param end_index: End index for the sub-histogram.
-    param input_data: The input data containing 'High', 'Low', or 'Close' values.
-    param precision: Precision for the distance calculation.
-    param max_iter: Maximum number of iterations to adjust the slope.
-    return: Tuple of the optimized trendline (numpy array) and the date index of the closest point.
-    """
-    sub_hist = input_data[start_index:end_index]
-    n = len(sub_hist)
-    best_slope = slope
-    delta_slope = 0.01 * abs(slope) if slope != 0 else 0.01
-
-    # Get the y-value of the extreme point
-    if type == 'support':
-        ref_value = input_data['Low'][extreme_point_idx]
-        values = sub_hist['Low'].values
-    elif type == 'resistance':
-        ref_value = input_data['High'][extreme_point_idx]
-        values = sub_hist['High'].values
-    else:
-        ref_value = input_data['Close'][extreme_point_idx]
-        values = sub_hist['Close'].values
-
-    # Convert extreme_point_idx (timestamp) to integer position in sub_hist
-    idx_pos = sub_hist.index.get_loc(extreme_point_idx)
-
-    prev_distance = float('inf')
-    direction = 1  # 1 for increasing slope, -1 for decreasing
-
-    for iter_count in range(max_iter):
-        intercept = ref_value - best_slope * idx_pos
-        trendline = best_slope * np.arange(n) + intercept
-
-        distances = np.abs(trendline - values)
-        distances[idx_pos] = np.inf  # Ignore the extreme point itself
-        min_distance = np.min(distances)
-        closest_idx = np.argmin(distances)
-
-        if min_distance <= precision:
-            date_idx = sub_hist.index[closest_idx]
-            return trendline, date_idx
-
-        if min_distance > prev_distance:
-            direction *= -1
-            delta_slope *= 0.5
-
-        if type == 'resistance':
-            best_slope += direction * delta_slope
-        elif type == 'support':
-            best_slope -= direction * delta_slope
-
-        prev_distance = min_distance
-
-    date_idx = sub_hist.index[closest_idx]
-    return trendline, date_idx
-
-#======================================================
-# Get optimized support and resistance trendlines
-def get_optimized_trendlines(start_index, end_index, precision=0.000001, input_data=None):
-    """
-    Calculate optimized support and resistance trendlines for the data between start_index and end_index.
-    param start_index: Start index for the sub-histogram.
-    param end_index: End index for the sub-histogram.
-    param precision: Precision for the distance calculation.
-    param input_data: The input data containing 'High', 'Low', or 'Close' values.
-    :return: Dictionary with 'support' and 'resistance' trendlines.
-    """
-    x_trend, y_trend = fast_trendline(input_data, start_index, end_index)
-    if not x_trend or not y_trend:
-        return {'support': None, 'resistance': None}
-
-    y_trend_arr = np.array(y_trend)
-    sub_hist = input_data[start_index:end_index]
-
-    # Find extreme points
-    support_idx, support_val, _ = find_extreme_point('support', sub_hist, y_trend_arr)
-    resistance_idx, resistance_val, _ = find_extreme_point('resistance', sub_hist, y_trend_arr)
-
-    # Initial slope from fast_trendline
-    n = len(sub_hist)
-    if n > 1:
-        initial_slope = (y_trend[-1] - y_trend[0]) / (n - 1)
-    else:
-        initial_slope = 0.0
-
-    # Optimize support trendline using the support extreme point index
-    support_trendline, support_idx_2nd_point = optimize_trendline_intersections(
-        'support', initial_slope, support_idx, start_index, end_index, input_data, precision=precision, max_iter=500
-    )
-
-    # Optimize resistance trendline using the resistance extreme point index
-    resistance_trendline, resistance_idx_2nd_point = optimize_trendline_intersections(
-        'resistance', initial_slope, resistance_idx, start_index, end_index, input_data, precision=precision, max_iter=500
-    )
-
-    return {
-        'support': support_trendline,
-        'resistance': resistance_trendline
-    }
-
-
-#======================================================
-
-# Fetch historical stock data using yfinance
-def fetch_stock_data(stock_symbol, period='1y'):
-    """Fetch historical data for a givemn stock 
-        Args:
-        ticker (str): Stock ticker symbol.
-        period (str): Period for which to fetch historical data. Default is '1y' (1 year)."""
-
-    ticker = yf.Ticker(stock_symbol)
-    
-    if ticker is None:
-        raise ValueError(f"Ticker {stock_symbol} not found.")
-    
-    hist_data = ticker.history(period=period)
-
-    if hist_data.empty:
-        raise ValueError(f"No historical data found for ticker: {ticker}")
-    
-    return hist_data
-
-# Calculate the MACD (Moving Average Convergence Divergence) for a given pandas Series.    
-def calculate_macd(series, short_window=12, long_window=26, signal_window=9):
-    """
-    Calculate the MACD (Moving Average Convergence Divergence) for a given pandas Series.
-    :param series: pandas Series of prices
-    :param short_window: Short period for MACD calculation (default is 12)
-    :param long_window: Long period for MACD calculation (default is 26)
-    :param signal_window: Signal line period (default is 9)
-    :return: pandas Series of MACD values and Signal line values
-    """
-    exp1 = series.ewm(span=short_window, adjust=False).mean()
-    exp2 = series.ewm(span=long_window, adjust=False).mean()
-    macd = exp1 - exp2
-    signal = macd.ewm(span=signal_window, adjust=False).mean()
-    return macd, signal
 
 # Create candlestick figure from input data and title parameters
-def create_candlestick_figure(input_data, title):
+def create_candlestick_figure(stock):
     """ Create a candlestick figure from input data and title parameters.
     Args:
-        input_data (pd.DataFrame): DataFrame containing 'Open', 'High', 'Low', 'Close' columns.
+        stock object: using get_historical_data to get pd.DataFrame with 'Open', 'High', 'Low', 'Close' columns.
         title (str): Title for the candlestick chart."""
-    if input_data.empty:
-        raise ValueError("Input data is empty. Please provide valid historical stock data.")
+    
+    # Check if historical data is already fetched    
+    if stock.get_historical_data().empty:
+        # if not, fetch it
+        stock._fetch_historical_data()  
     
     #Create candlestick
     candlesticks = go.Candlestick(
-        x=input_data.index,
-        open=input_data['Open'],
-        high=input_data['High'],
-        low=input_data['Low'],
-        close=input_data['Close'],
+        x=stock.get_indexes(),
+        open=stock.get_historical_data('Open'),
+        high=stock.get_historical_data('High'),
+        low=stock.get_historical_data('Low'),
+        close=stock.get_historical_data('Close'),
         name='Candlestick'
     )
 
     #Create (filter out) separate data frames in order to be able to show red & green bars depending on Close/Open price relation
-    green_volume_df = input_data[input_data['Close'] >= input_data['Open']]
-    red_volume_df = input_data[input_data['Close'] < input_data['Open']]
+    green_volume_df = stock.get_historical_data()[stock.get_historical_data()['Close'] >= stock.get_historical_data()['Open']]
+    red_volume_df = stock.get_historical_data()[stock.get_historical_data()['Close'] < stock.get_historical_data()['Open']]
 
     #Create green volume bars from green volume data frames
     volume_bars_green = go.Bar(
@@ -344,7 +122,7 @@ def create_candlestick_figure(input_data, title):
 
     #update figure layout
     figure.update_layout(
-        title=title,
+        title=f"{stock.name} Stock Price - Last {stock.period}",
         xaxis_title='Date',
         yaxis_title='Volume',
         legend=dict(
@@ -418,41 +196,62 @@ def create_candlestick_figure(input_data, title):
     return figure
 
 # Create a RSI figure from input data and title parameters
-def create_rsi_figure(x_data, RSI_series, title):
+def create_rsi_figure(stock, title):
     """ Create a RSI figure from input data and title parameters.
     Args:
-        input_data (pd.DataFrame): DataFrame containing 'RSI' column.
+        stock object: using get_historical_data to get pd.DataFrame with 'RSI' columns.
         title (str): Title for the RSI chart."""
-    if x_data is None or RSI_series.empty:
-        raise ValueError("Input data is empty. Please provide valid historical stock data with RSI values.")
-    
+
+    # # Get historical data from stock object
+    # historical_data = stock.get_historical_data()
+
+    # if historical_data is None:
+    #     raise ValueError("Stock historical data is empty.")
+
+    if stock.get_indicator('RSI') is None:
+        # if not, calculate it
+        stock._calculate_rsi()
+
+        
     figure = go.Figure()
-    figure.add_trace(go.Scatter(x=x_data, y=RSI_series, mode='lines', name='RSI'))
+    figure.add_trace(go.Scatter(x=stock.get_indexes(), y=stock.get_indicator('RSI'), mode='lines', name='RSI'))
     figure.update_layout(title=title, xaxis_title='Date', yaxis_title='RSI')
 
     return figure
 
 # Create a MACD figure from input data and title parameters
-def create_macd_figure(x_data, macd_series, signal_series, title):
+def create_macd_figure(stock, title):
     """ Create a MACD figure from input data and title parameters.
     Args:
-        x_data (pd.Index): Index of dates for the x-axis.
-        macd_series (pd.Series): Series containing MACD values.
-        signal_series (pd.Series): Series containing Signal line values.
+        stock object: using get_historical_data to get pd.DataFrame with 'MACD', 'Signal' columns.
         title (str): Title for the MACD chart."""
-    if x_data is None or macd_series.empty or signal_series.empty:
-        raise ValueError("Input data is empty. Please provide valid historical stock data with MACD values.")
+    
+    # if stock.get_ is None:
+    #     raise ValueError("Stock historical data is empty.")
+
+    if stock.get_indicator('MACD') is None or stock.get_indicator('Signal') is None:
+        # if not, calculate it
+        stock._calculate_macd()
     
     figure = go.Figure()
-    figure.add_trace(go.Scatter(x=x_data, y=macd_series, mode='lines', name='MACD'))
-    figure.add_trace(go.Scatter(x=x_data, y=signal_series, mode='lines', name='Signal'))
+
+    figure.add_trace(go.Scatter(x=stock.get_indexes(), y=stock.get_indicator('MACD'), mode='lines', name='MACD'))
+    figure.add_trace(go.Scatter(x=stock.get_indexes(), y=stock.get_indicator('Signal'), mode='lines', name='Signal'))
     figure.update_layout(title=title, xaxis_title='Date', yaxis_title='Value')
 
     return figure
 
+
+def trace_visibility(figure, trace_name, visible):
+    """ Set the visibility of a trace in the figure."""
+    for trace in figure.data:
+        if trace.name == trace_name:
+            trace.visible = visible
+
 #======================================================
 
 top_50_SandP_stocks = {
+    "NDA-FI.HE": "Norde Bank Abp",
     "OTP.BD": "OTP Bank Nyrt.",
     "MSFT": "Microsoft Corporation",
     "NVDA": "NVIDIA Corporation",
@@ -508,36 +307,36 @@ top_50_SandP_stocks = {
 
 element_side_margins_1 = '65px'         # left and right margins for elements - #1
 max_dropdown_width = '300px'  # max width of the dropdown menu
-default_stock = 'NVDA'  #Default stock name
-selected_stock = "NVDA"  # Default selected stock ticker
+default_stock = 'NDA-FI.HE'  #Default stock name
+current_stock = "NDA-FI.HE"  # Default selected stock ticker
 
-stock_name = "OTP.BD"  # Example stock ticker
+previous_range_slider_value = None # Stores the range slider value from previous callback to avoid necessary updates
+trendline_pronogation = 40 # Number of days to prolong trendlines beyond the end range marker
 
 # Checkbox list for indicators
 Indicator_list = ['Moving Average 1', 'Moving Average 2', 'Trendlines', 'Bollinger Bands', 'Volume']
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG) #Set logger level to DEBUG
+
 # ================ Fetch historical data and calculate indicators =================
-# Fetch historical data for stock
-hist = fetch_stock_data(default_stock, period='1y')  # Fetch 1 year of historical data
-# Calculate RSI
-hist['RSI'] = calculate_rsi(hist['Close'])
-# Calculate MACD
-hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
+# Create stock object, fetch historical data, and calculate indicators
+stock = st.Stock(current_stock)  # Create an instance of the Stock class
+
 
 # ========================= Create Stock Price Candlestick Chart ============
-candlestick_fig = create_candlestick_figure(hist, f"{default_stock} Stock Price - Last 1 Year")
+candlestick_fig = create_candlestick_figure(stock)
 
 # =============================== Create RSI figure ========================
-rsi_fig = create_rsi_figure(hist.index, hist['RSI'], 'RSI (14)')
+rsi_fig = create_rsi_figure(stock, 'RSI (14)')
 
 # =============================== Create MACD figure =======================
-macd_fig = create_macd_figure(hist.index, hist['MACD'], hist['Signal'], 'MACD (12, 26, 9)')
+macd_fig = create_macd_figure(stock, 'MACD (12, 26, 9)')
 
 
 # ================ Create Dash application and layout =================
 app = dash.Dash(__name__)
 
-# ======================= Create a Dash application layout =================
 app.layout = html.Div([   
     html.Div([
         dcc.Dropdown(
@@ -562,16 +361,16 @@ app.layout = html.Div([
         dcc.DatePickerSingle(
             id='start-date',
             placeholder='Start Date',
-            date=hist.index[0],
-            min_date_allowed=hist.index[0],
-            max_date_allowed=hist.index[len(hist) - 1],
+            date=stock.get_indexes()[0],
+            min_date_allowed=stock.get_indexes()[0],
+            max_date_allowed=stock.get_indexes()[stock.get_number_of_idx() - 1],
         ),
         dcc.DatePickerSingle(
             id='end-date',
             placeholder='End Date',
-            date=hist.index[len(hist) - 1],
-            min_date_allowed=hist.index[0],
-            max_date_allowed=hist.index[len(hist) - 1],
+            date=stock.get_indexes()[stock.get_number_of_idx() - 1],
+            min_date_allowed=stock.get_indexes()[0],
+            max_date_allowed=stock.get_indexes()[stock.get_number_of_idx() - 1],
         ) ], 
         style={
         'display': 'flex',
@@ -586,9 +385,9 @@ app.layout = html.Div([
         dcc.RangeSlider(
             id='date-range-slider',
             min=0,
-            max=len(hist.index) - 1,
-            value=[0, len(hist.index) - 1],
-            marks={i: hist.index[i].strftime('%Y-%m-%d') for i in range(0, len(hist.index), max(1, len(hist.index)//10))},
+            max=stock.get_number_of_idx() - 1,
+            value=[0, stock.get_number_of_idx() - 1],
+            marks={i: stock.get_indexes()[i].strftime('%Y-%m-%d') for i in range(0, stock.get_number_of_idx(), max(1, stock.get_number_of_idx()//10))},
             step=1,
             allowCross=False,
             tooltip={"placement": "bottom", "always_visible": True},
@@ -617,37 +416,10 @@ app.layout = html.Div([
 def update_slider_range(start_date_input, end_date_input):
     
     #Find the index which is closest to start & end date received from date Input field
-    closest_start_date = find_index(start_date_input)
-    closest_end_date = find_index(end_date_input)
+    closest_start_date = stock.get_next_closest_index(start_date_input)
+    closest_end_date = stock.get_next_closest_index(end_date_input)
     
     return [closest_start_date,closest_end_date]
-
-def find_index(date):
-    global hist
-
-    #take only date from datetime
-    date = pd.to_datetime(date).date()
-
-    date_idx = 0
-
-    #Loop over indexes
-    for index in range (0,len(hist.index)):
-        #take only date from index's datetime
-        idx_date = hist.index[index].date()
-
-        #If date is greater or equals ti index's date, store current index for next iteration
-        if date >= idx_date:
-            date_idx = index
-        else:
-            #We found a date from index's date which is greater then input date -> return the index of previous element
-            return date_idx
-    
-    #If loop is over, but input date equals to last index's date then this last elemet shall be return
-    if date == idx_date:
-        return index
-    
-    return None
-
 
 # ================================ Callback to update the charts ======================
 @app.callback(
@@ -663,27 +435,27 @@ def find_index(date):
     Input('indicator-checklist', 'value'),
     Input('date-range-slider', 'value'),
 )
-def update_chart(stock, indicators_selected, slider_value):
+def update_chart(stock_item, indicators_selected, slider_value):
 
-    global selected_stock, hist, candlestick_fig, rsi_fig, macd_fig
+    global current_stock, candlestick_fig, rsi_fig, macd_fig, stock, previous_range_slider_value, trendline_pronogation
 
-    if stock != selected_stock:
-        # Fetch new historical data for the selected stock
-        hist = fetch_stock_data(stock, period='1y')  # Fetch 1 year of historical data
-        selected_stock = stock  # Update the selected stock
+    update_trendlines = False #Flag to indicate if trendlines data needs to be recalculated and added as a new trace to chart
 
-        # Calculate RSI
-        hist['RSI'] = calculate_rsi(hist['Close'])
-        # Calculate MACD
-        hist['MACD'], hist['Signal'] = calculate_macd(hist['Close'], short_window=12, long_window=26, signal_window=9)
+
+    if stock_item != current_stock:
+        logger.debug(f"Create new stock object for {stock_item} for period {stock_item}")
+        # Create new stock object for the selected stock
+        stock = st.Stock(stock_item)
+        current_stock = stock_item  # Update the selected stock
 
         # Recreate Candlestick, RSI, MACD figures with new data
-        cp_stock_fig = create_candlestick_figure(hist, f"{selected_stock} Stock Price - Last 1 Year")
-        cp_rsi_fig = create_rsi_figure(hist.index, hist['RSI'], 'RSI (14)')
-        cp_macd_fig = create_macd_figure(hist.index, hist['MACD'], hist['Signal'], 'MACD (12, 26, 9)') 
-        #if new stock selected, reset the reange slider indexes.
+        logger.debug(f"Create new Candlestick, MACD, RSI figures for {stock_item}")
+        cp_stock_fig = create_candlestick_figure(stock)
+        cp_rsi_fig = create_rsi_figure(stock, 'RSI (14)')
+        cp_macd_fig = create_macd_figure(stock, 'MACD (12, 26, 9)') 
+        #if new stock selected, reset the range slider indexes.
         start_idx = 0
-        end_idx = len(hist.index) - 1
+        end_idx = stock.get_number_of_idx() - 1
     else:
         # If the stock is the same, use the existing figures
         cp_stock_fig = go.Figure(candlestick_fig)  # Create a copy to avoid modifying the original
@@ -692,65 +464,28 @@ def update_chart(stock, indicators_selected, slider_value):
         # if no new stock selected, get range slider values
         start_idx, end_idx = slider_value
  
-    start_date = hist.index[start_idx]
-    end_date = hist.index[end_idx]
+    
+    start_date = stock.get_indexes()[start_idx]
+    end_date = stock.get_indexes()[end_idx]
 
     # Recalculate range slider values and marks -> this is needed because new stock data may have different index count, therefore range slider shall be updated according to this
     range_slider_value = [start_idx, end_idx]
-    range_slider_marks = {i: hist.index[i].strftime('%Y-%m-%d') for i in range(0, len(hist.index), max(1, len(hist.index)//10))}
+    range_slider_marks = {i: stock.get_indexes()[i].strftime('%Y-%m-%d') for i in range(0, stock.get_number_of_idx(), max(1, stock.get_number_of_idx()//10))}
 
-    # Update RSI chart with the selected date range lines
-    cp_rsi_fig.update_layout(shapes=[
-        dict(
-            type="line",
-            xref="x",
-            yref="paper",
-            x0=start_date,
-            x1=start_date,
-            y0=0,
-            y1=1,
-            line=dict(color="blue", width=1, dash="dot"),
-        ),
-        dict(
-            type="line",
-            xref="x",
-            yref="paper",
-            x0=end_date,
-            x1=end_date,
-            y0=0,
-            y1=1,
-            line=dict(color="blue", width=1, dash="dot"),
-        ),
-    ])
+    #Check if range slider value has changed
+    if previous_range_slider_value != range_slider_value:
+        # Update elements which are affected by the range slider value change. e.g.: Range markers on charts and trendlines and datevalues in date pickers
+        
+        logger.debug(f"Ranger slider value changed from {previous_range_slider_value} to {range_slider_value}")
 
-    # Update MACD chart with the selected date range lines
-    cp_macd_fig.update_layout(shapes=[
-        dict(
-            type="line",
-            xref="x",
-            yref="paper",
-            x0=start_date,
-            x1=start_date,
-            y0=0,
-            y1=1,
-            line=dict(color="blue", width=1, dash="dot"),
-        ),
-        dict(
-            type="line",
-            xref="x",
-            yref="paper",
-            x0=end_date,
-            x1=end_date,
-            y0=0,
-            y1=1,
-            line=dict(color="blue", width=1, dash="dot"),
-        ),
-    ])
-    
-    #update candlestick chart with the selected date range lines
-    cp_stock_fig.update_layout(
-        title=f"{selected_stock} Stock Price - Last 1 Year",
-        shapes=[
+        # Check if Trendline were already calculated, update it only when it was shown on the chart at least once -> Performance optimization
+
+        if (stock.trendline is not None):
+            # Signalize to recalculate the trendlines later in this function
+            update_trendlines = True
+
+        # Update RSI chart with the selected date range lines
+        cp_rsi_fig.update_layout(shapes=[
             dict(
                 type="line",
                 xref="x",
@@ -771,180 +506,230 @@ def update_chart(stock, indicators_selected, slider_value):
                 y1=1,
                 line=dict(color="blue", width=1, dash="dot"),
             ),
-        ]
-    )
+        ])
 
-    if indicators_selected != None or stock != selected_stock:
+        # Update MACD chart with the selected date range lines
+        cp_macd_fig.update_layout(shapes=[
+            dict(
+                type="line",
+                xref="x",
+                yref="paper",
+                x0=start_date,
+                x1=start_date,
+                y0=0,
+                y1=1,
+                line=dict(color="blue", width=1, dash="dot"),
+            ),
+            dict(
+                type="line",
+                xref="x",
+                yref="paper",
+                x0=end_date,
+                x1=end_date,
+                y0=0,
+                y1=1,
+                line=dict(color="blue", width=1, dash="dot"),
+            ),
+        ])
+    
+        #update candlestick chart with the selected date range lines
+        cp_stock_fig.update_layout(
+            title=f"{stock.name} Stock Price - Last {stock.period}",
+            shapes=[
+                dict(
+                    type="line",
+                    xref="x",
+                    yref="paper",
+                    x0=start_date,
+                    x1=start_date,
+                    y0=0,
+                    y1=1,
+                    line=dict(color="blue", width=1, dash="dot"),
+                ),
+                dict(
+                    type="line",
+                    xref="x",
+                    yref="paper",
+                    x0=end_date,
+                    x1=end_date,
+                    y0=0,
+                    y1=1,
+                    line=dict(color="blue", width=1, dash="dot"),
+                ),
+            ]
+        )
+
+        previous_range_slider_value = range_slider_value # Update the previous range slider value to the current one
+
+    logger.debug(f"Indicators selected: {indicators_selected}")
+
+    # Create a list of the chart trace names in candlestick figure to use it later if trace is already added to the figure
+    traces_names_in_stock_figure = [trace.name for trace in cp_stock_fig.data]
+    
+    if indicators_selected != None:
         #Calculate and plot the first moving average if selected
         if 'Moving Average 1' in indicators_selected:
-            # Calculate and plot the first moving average (e.g., 20-day)
-            ma1 = hist['Close'].rolling(window=20).mean()
-            cp_stock_fig.add_trace(go.Scatter(
-                x=hist.index,
-                y=ma1,
-                mode='lines',
-                name='Moving Average 1 (20-day)',
-                line=dict(color='blue', width=1),
-            ),secondary_y=True,),
+            # Check if Moving Average was already calculated
+            if stock.get_indicator('Moving Average 1') is None:
+                # if not, calculate it
+                stock._calculate_moving_averages('Moving Average 1', 20)
+
+            # If 'Moving Average 1 (20-day)' trace already exists, set it to visible
+            if 'Moving Average 1 (20-day)' in traces_names_in_stock_figure:
+                    trace_visibility(cp_stock_fig, 'Moving Average 1 (20-day)', True)
+            else:
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=stock.get_indexes(),
+                    y=stock.get_indicator('Moving Average 1'),
+                    mode='lines',
+                    name='Moving Average 1 (20-day)',
+                    line=dict(color='blue', width=1),
+                ),secondary_y=True,),
         else:
-            #Search for traces with 'Moving Average 1' in their name and set them to not visible
-            for trace in cp_stock_fig['data']:
-                if 'Moving Average 1' in trace['name']:
-                    trace['visible'] = False
+            # Set trace visibility to False
+            trace_visibility(cp_stock_fig, 'Moving Average 1 (20-day)', False)
 
         # Calculate and plot the second moving average if selected
         if 'Moving Average 2' in indicators_selected:
-            # Calculate and plot the second moving average (e.g., 50-day)
-            ma2 = hist['Close'].rolling(window=50).mean()
-            cp_stock_fig.add_trace(go.Scatter(
-                x=hist.index,
-                y=ma2,
-                mode='lines',
-                name='Moving Average 2 (50-day)',
-                line=dict(color='red', width=1)
-            ),secondary_y=True,)
+            # Check if Moving Average was already calculated
+            if stock.get_indicator('Moving Average 2') is None:
+                # if not, calculate it
+                stock._calculate_moving_averages('Moving Average 2', 50)
+
+            # If 'Moving Average 2 (50-day)' trace already exists, set it to visible
+            if 'Moving Average 2 (50-day)' in traces_names_in_stock_figure:
+                trace_visibility(cp_stock_fig, 'Moving Average 2 (50-day)', True)
+            else:
+                # Otherwise add a new trace for Moving Average 2
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=stock.get_indexes(),
+                    y=stock.get_indicator('Moving Average 2'),
+                    mode='lines',
+                    name='Moving Average 2 (50-day)',
+                    line=dict(color='red', width=1)
+                ),secondary_y=True,)
         else:
-            #Search for traces with 'Moving Average 2' in their name and set them to not visible
-            for trace in cp_stock_fig['data']:
-                if 'Moving Average 2' in trace['name']:
-                    trace['visible'] = False
+            # Set trace visibility to False
+            trace_visibility(cp_stock_fig, 'Moving Average 2 (50-day)', False)
 
         # Calculate and show the trendline if the checkbox is selected
-        if 'Trendlines' in indicators_selected:
-            #Remove previous Trendlines from figure if there is any
-            #This is needed to avoid multiple trendlines on the same chart e.g. if trendline checkbox is selected and range slider changed
-            cp_stock_fig['data'] = [trace for trace in cp_stock_fig['data'] if 'Trendline' not in trace['name']]
+        # or just recalulate and replace traces in chart figure when range slider value changed
+        if ('Trendlines' in indicators_selected) or (update_trendlines == True):
+            # Calculate trendline if it hasn't been calculated yet, or needs to be recalculated due to range value change
+            if (stock.trendline is None) or (update_trendlines == True):
+                # if not, calculate it
+                stock._calculate_trendline(start_idx, end_idx,prolongation=trendline_pronogation)
+                # Calculate Support and Resistance trendlines 
+                stock._calculate_sup_res_trendlines(start_idx, end_idx, 0.000001,prolongation=trendline_pronogation)
 
-            # Calculate and plot the fast trendline
-            x_trend, y_trend = fast_trendline(hist, start_idx, end_idx)
-            if x_trend and y_trend:
+        #If trendlines needs to be upadted replace trendline data in the figure traces
+        if update_trendlines == True:
+            print("replace tradline traces")
+            for trace in cp_stock_fig.data:
+                if trace.name == 'Trendline':
+                    trace.x=stock.trendline['index']
+                    trace.y=stock.trendline['Trendline']              
+                elif trace.name == 'Support Trendline':
+                    trace.x=stock.trendline['index']
+                    trace.y=stock.trendline['Support Trendline']
+                else:
+                    if trace.name == 'Resistance Trendline':
+                        trace.x=stock.trendline['index']
+                        trace.y=stock.trendline['Resistance Trendline']
+
+
+        if ('Trendlines' in indicators_selected):
+            if 'Trendline' in traces_names_in_stock_figure:
+                trace_visibility(cp_stock_fig, 'Trendline', True)
+                trace_visibility(cp_stock_fig, 'Support Trendline', True)
+                trace_visibility(cp_stock_fig, 'Resistance Trendline', True)
+            else:
+                #Otherwise add the trendline as new traces
                 cp_stock_fig.add_trace(go.Scatter(
-                x=x_trend,
-                y=y_trend,
+                x=stock.trendline['index'],
+                y=stock.trendline['Trendline'],
                 mode='lines',
-                name='Fast Trendline',
+                name='Trendline',
                 line=dict(color='orange', width=1)
                 ),secondary_y=True,)
-
-            # Calculate and plot the optimized support
-            trendlines = get_optimized_trendlines(start_idx,end_idx , precision=0.1, input_data=hist)
-            if trendlines['support'] is not None:
-                support_trendline = trendlines['support']
-                x_trend = hist.index[start_idx:end_idx + 1]
+                #Add the support trendline as new traces
                 cp_stock_fig.add_trace(go.Scatter(
-                    x=x_trend,
-                    y=support_trendline,
+                    x=stock.trendline['index'],
+                    y=stock.trendline['Support Trendline'],
                     mode='lines',
                     name='Support Trendline',
                     line=dict(color='green', width=1)
                 ),secondary_y=True,)
-            # Calculate and plot the resistance
-            if trendlines['resistance'] is not None:
-                resistance_trendline = trendlines['resistance']
-                x_trend = hist.index[start_idx:end_idx + 1]
+                #Add the resistance trendline as new traces
                 cp_stock_fig.add_trace(go.Scatter(
-                    x=x_trend,
-                    y=resistance_trendline,
+                    x=stock.trendline['index'],
+                    y=stock.trendline['Resistance Trendline'],
                     mode='lines',
                     name='Resistance Trendline',
                     line=dict(color='red', width=1)
                 ),secondary_y=True,)
 
-
-            ######################## Prolong the trendlines over the next 20 days after the end date ####################
-            # 1. Calculate the new end index (prolonged, but not past last date)
-            prolonged_end_idx = min(end_idx + 20, len(hist.index) - 1)
-
-            # 2. Get the x-axis values for the prolonged range
-            x_trend_prolonged = hist.index[start_idx:prolonged_end_idx + 1]
-
-            # 3. For plotting, extend the trendline y-values accordingly
-            # If your trendline is calculated as y = slope * x + intercept, recalculate for the extended x
-            n_prolonged = len(x_trend_prolonged)
-            if trendlines['support'] is not None:
-                # Recalculate the trendline for the extended range
-                # Use the same slope and intercept as before
-                support_slope = (trendlines['support'][-1] - trendlines['support'][0]) / (end_idx - start_idx) if end_idx > start_idx else 0
-                support_intercept = trendlines['support'][0]
-                support_trendline_prolonged = [support_slope * i + support_intercept for i in range(n_prolonged)]
-                cp_stock_fig.add_trace(go.Scatter(
-                    x=x_trend_prolonged,
-                    y=support_trendline_prolonged,
-                    mode='lines',
-                    name='Support Trendline (Prolonged)',
-                    line=dict(color='green', width=1, dash='dash')
-                ),secondary_y=True,)
-
-            if trendlines['resistance'] is not None:
-                resistance_slope = (trendlines['resistance'][-1] - trendlines['resistance'][0]) / (end_idx - start_idx) if end_idx > start_idx else 0
-                resistance_intercept = trendlines['resistance'][0]
-                resistance_trendline_prolonged = [resistance_slope * i + resistance_intercept for i in range(n_prolonged)]
-                cp_stock_fig.add_trace(go.Scatter(
-                    x=x_trend_prolonged,
-                    y=resistance_trendline_prolonged,
-                    mode='lines',
-                    name='Resistance Trendline (Prolonged)',
-                    line=dict(color='red', width=1, dash='dash')
-                ),secondary_y=True,)
-            ###########################################################################################
         else:
-            #Search for traces with 'Trendline' in their name and set them to not visible
-            for trace in cp_stock_fig['data']:
-                if 'Trendline' in trace['name']:
-                    trace['visible'] = False
+            trace_visibility(cp_stock_fig, 'Trendline', False)
+            trace_visibility(cp_stock_fig, 'Support Trendline', False)
+            trace_visibility(cp_stock_fig, 'Resistance Trendline', False)
+
 
         # Calculate and plot Bollinger Bands if selected
         if 'Bollinger Bands' in indicators_selected:
-            # Calculate Bollinger Bands
-            window = 20
-            std_dev = hist['Close'].rolling(window=window).std()
-            middle_band = hist['Close'].rolling(window=window).mean()
-            upper_band = middle_band + (std_dev * 2)
-            lower_band = middle_band - (std_dev * 2)
+            # Chack if Bollinger Bands were already calculated
+            if stock.get_indicator('Middle Bollinger Band') is None:
+                # if not, calculate it
+                stock._calculate_bollinger_bands(20)
 
-            cp_stock_fig.add_trace(go.Scatter(
-                x=hist.index,
-                y=upper_band,
-                mode='lines',
-                name='Upper Bollinger Band',
-                line=dict(color='purple', width=1, dash='dash')
-            ),secondary_y=True,)
-            cp_stock_fig.add_trace(go.Scatter(
-                x=hist.index,
-                y=middle_band,
-                mode='lines',
-                name='Middle Bollinger Band',
-                line=dict(color='orange', width=1, dash='dash')
-            ),secondary_y=True,)
-            cp_stock_fig.add_trace(go.Scatter(
-                x=hist.index,
-                y=lower_band,
-                mode='lines',
-                name='Lower Bollinger Band',
-                line=dict(color='purple', width=1, dash='dash')
-            ),secondary_y=True,)
+            # If 'Bollinger' trace already exists, set it to visible
+            if any('Bollinger Band' in trace for trace in traces_names_in_stock_figure):
+
+                trace_visibility(cp_stock_fig, 'Upper Bollinger Band', True)
+                trace_visibility(cp_stock_fig, 'Middle Bollinger Band', True)
+                trace_visibility(cp_stock_fig, 'Lower Bollinger Band', True)
+            else:
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=stock.get_indexes(),
+                    y=stock.get_indicator('Upper Bollinger Band'),
+                    mode='lines',
+                    name='Upper Bollinger Band',
+                    line=dict(color='purple', width=1, dash='dash')
+                ),secondary_y=True,)
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=stock.get_indexes(),
+                    y=stock.get_indicator('Middle Bollinger Band'),
+                    mode='lines',
+                    name='Middle Bollinger Band',
+                    line=dict(color='orange', width=1, dash='dash')
+                ),secondary_y=True,)
+                cp_stock_fig.add_trace(go.Scatter(
+                    x=stock.get_indexes(),
+                    y=stock.get_indicator('Lower Bollinger Band'),
+                    mode='lines',
+                    name='Lower Bollinger Band',
+                    line=dict(color='purple', width=1, dash='dash')
+                ),secondary_y=True,)
         else:
-            #Search for traces with 'Bollinger Band' in their name and set them to not visible
-            for trace in cp_stock_fig['data']:
-                if 'Bollinger Band' in trace['name']:
-                    trace['visible'] = False
+            # Set Boillimger Band visibility to False
+            trace_visibility(cp_stock_fig, 'Upper Bollinger Band', False)
+            trace_visibility(cp_stock_fig, 'Middle Bollinger Band', False)
+            trace_visibility(cp_stock_fig, 'Lower Bollinger Band', False)
 
         if 'Volume' in indicators_selected:
-            #Search for traces with 'Volume' in their name and set them to not visible
-            for trace in cp_stock_fig['data']:
-                if 'Volume' in trace['name']:
-                    trace['visible'] = True
+            # Set trace visibility to true
+            if 'Volume' in traces_names_in_stock_figure:
+                trace_visibility(cp_stock_fig, 'Volume', True)
         else:
-            #Search for traces with 'Volume' in their name and set them to visible
-            for trace in cp_stock_fig['data']:
-                if 'Volume' in trace['name']:
-                    trace['visible'] = False
+            # Set trace visibility to false
+            if 'Volume' in traces_names_in_stock_figure:
+                trace_visibility(cp_stock_fig, 'Volume', False)
 
     candlestick_fig = cp_stock_fig
     rsi_fig = cp_rsi_fig
     macd_fig = cp_macd_fig
 
-    return cp_stock_fig, cp_rsi_fig, cp_macd_fig, len(hist.index), range_slider_value, range_slider_marks, start_date, end_date
+    return cp_stock_fig, cp_rsi_fig, cp_macd_fig, stock.get_number_of_idx(), range_slider_value, range_slider_marks, start_date, end_date
 
 
 
