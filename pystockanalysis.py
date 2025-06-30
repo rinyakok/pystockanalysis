@@ -134,7 +134,7 @@ def create_candlestick_figure(stock):
             font=dict(
                 size=11,
             ),
-        )
+        ),
     )
 
 
@@ -316,6 +316,15 @@ trendline_pronogation = 40 # Number of days to prolong trendlines beyond the end
 # Checkbox list for indicators
 Indicator_list = ['Moving Average 1', 'Moving Average 2', 'Trendlines', 'Bollinger Bands', 'Volume']
 
+
+# Initial 'Marker Mode' button style
+#marker_mode_btn_style_default = {'background-color': 'white', 'color': 'black', 'height': '30px', 'width': '100px'}
+marker_mode_btn_style_default = {'background-color': 'white'}
+# Selected 'Marker Mode' button style
+#marker_mode_btn_style_selected = {'background-color': 'orange', 'color': 'black', 'height': '30px', 'width': '100px'}
+marker_mode_btn_style_selected = {'background-color': 'orange'}
+
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG) #Set logger level to DEBUG
 
@@ -348,54 +357,17 @@ app.layout = html.Div([
         ],
     style={'margin-left': element_side_margins_1, 'margin-right': element_side_margins_1, 'maxWidth': max_dropdown_width, 'margin-bottom': '20px'},
     ),
-    #html.H1([f"{top_50_SandP_stocks[default_stock]} Stock Price - Last 1 Year"], id='stock-title'),
+    html.Button('Marker Mode', id='marker-mode-button', n_clicks=0, style = marker_mode_btn_style_default),
     html.Div([
-        dcc.Store(id='trendline-points', data=[]),  # Store for clicked points
+        dcc.Store(id='marker-positions', data={'marker1': None, 'marker2': None}),  # Store for marker clicked points
+        dcc.Store(id='graph-mode', data={'marker_mode': None }),  # Store the current graph mode
         dcc.Checklist(Indicator_list, id='indicator-checklist', inline=True, inputStyle={'margin-right': '10px'}, labelStyle={'display': 'inline-block', 'margin-right': '20px'}, style={'margin-left': '80px'}),
         dcc.Graph(
             id='stock-chart',
             figure= candlestick_fig,
+            config={'modeBarButtonsToAdd': ['drawline']},
         ),
     ]),
-    html.Div([
-        dcc.DatePickerSingle(
-            id='start-date',
-            placeholder='Start Date',
-            date=stock.get_indexes()[0],
-            min_date_allowed=stock.get_indexes()[0],
-            max_date_allowed=stock.get_indexes()[stock.get_number_of_idx() - 1],
-        ),
-        dcc.DatePickerSingle(
-            id='end-date',
-            placeholder='End Date',
-            date=stock.get_indexes()[stock.get_number_of_idx() - 1],
-            min_date_allowed=stock.get_indexes()[0],
-            max_date_allowed=stock.get_indexes()[stock.get_number_of_idx() - 1],
-        ) ], 
-        style={
-        'display': 'flex',
-        'justifyContent': 'space-between',
-        'width': '100%',
-        'padding': '0 20px',
-        'margin-left': element_side_margins_1, 
-        'margin-right': '0px',
-        'margin-bottom' : '10px',
-    }),
-    html.Div([
-        dcc.RangeSlider(
-            id='date-range-slider',
-            min=0,
-            max=stock.get_number_of_idx() - 1,
-            value=[0, stock.get_number_of_idx() - 1],
-            marks={i: stock.get_indexes()[i].strftime('%Y-%m-%d') for i in range(0, stock.get_number_of_idx(), max(1, stock.get_number_of_idx()//10))},
-            step=1,
-            allowCross=False,
-            tooltip={"placement": "bottom", "always_visible": True},
-            updatemode='mouseup',
-        ), ],
-    style={'margin-left': element_side_margins_1, 'margin-right': element_side_margins_1},
-    ),
-    html.Div(id='slider-date-label', style={'margin': '10px', 'fontWeight': 'bold'}),
     dcc.Graph(
         id='rsi-chart',
         figure=rsi_fig
@@ -406,41 +378,126 @@ app.layout = html.Div([
     )
 ])
 
-# Callback to update Range Slider with the inputs from date select inputs
-@app.callback(
-    Output('date-range-slider', 'value', allow_duplicate=True),
-    Input('start-date', 'date'),
-    Input('end-date', 'date'),
-    prevent_initial_call='initial_duplicate'
-)
-def update_slider_range(start_date_input, end_date_input):
-    
-    #Find the index which is closest to start & end date received from date Input field
-    closest_start_date = stock.get_next_closest_index(start_date_input)
-    closest_end_date = stock.get_next_closest_index(end_date_input)
-    
-    return [closest_start_date,closest_end_date]
+#==================================  Chart Markers Handling ============================
 
-# ================================ Callback to update the charts ======================
+# Add markers to figure
+def add_markers_to_figure(fig, marker_positions):
+    if fig != None:
+        if marker_positions['marker1'] is not None:
+            logger.debug(f"Draw marker line 1 to {fig['layout']['title']['text']} position: {marker_positions['marker1']}")
+            fig.add_vline(x=marker_positions['marker1'], name='marker1', line_width=1, line_dash="dot", line_color="grey")
+
+    # If Marker 2 position is available add vertical line to Marker 2 position
+    if marker_positions['marker2'] is not None:
+            logger.debug(f"Draw line 2 to {fig['layout']['title']['text']} position: {marker_positions['marker2']}")
+            fig.add_vline(x=marker_positions['marker2'], name='marker2', line_width=1, line_dash="dot", line_color="grey")
+
+#Remove markers (shapes in names 'marker) from figure
+def remove_markers_from_figure(fig):
+    #Remove marker shapes which already added earlier
+    updated_shapes = []
+    for shape in fig['layout']['shapes']:
+        #Serach for shapes which has no 'marker' in their names
+        if 'marker' not in shape['name']:
+            #add them to a new shape list
+            updated_shapes.append(shape)
+    #update the figure shape list with the new one filtered out the markers
+    fig['layout']['shapes'] = updated_shapes
+
+# Callback to toggle graph marker mode and change marker mode button style depending on marker mode
 @app.callback(
-    Output('stock-chart', 'figure'),
-    Output('rsi-chart', 'figure'),
-    Output('macd-chart', 'figure'),
-    Output('date-range-slider', 'max'),
-    Output('date-range-slider', 'value'),
-    Output('date-range-slider', 'marks'),
-    Output('start-date', 'date'),
-    Output('end-date', 'date'),
+    Output('graph-mode', 'data', allow_duplicate=True),
+    Output('marker-mode-button', 'style'),
+    Input('marker-mode-button', 'n_clicks'),
+    State('graph-mode', 'data'),
+    prevent_initial_call=True
+)
+
+def update_graph_mode(n_clicks, graph_mode):
+    """ Callback function to toggle graph marker mode on/off
+    :param n_click: number of clicks on button 
+    :param graph_mode: the current graph-mode 
+    return changed graph mode 
+    """
+    # If Marker mode is None switch it to Marker1 mode
+    if graph_mode['marker_mode'] is None:
+        graph_mode['marker_mode'] = 'Marker1'
+        btn_style = marker_mode_btn_style_selected
+    else:
+        graph_mode['marker_mode'] = None
+        btn_style = marker_mode_btn_style_default
+
+    return graph_mode, btn_style
+
+#Callback to update marker lines on stock-chart
+@app.callback(
+    Output('stock-chart', 'figure', allow_duplicate=True),
+    Output('rsi-chart', 'figure', allow_duplicate=True),
+    Output('macd-chart', 'figure', allow_duplicate=True),
+    Output('marker-positions', 'data'),
+    Output('graph-mode', 'data', allow_duplicate=True),
+    Input('stock-chart', 'clickData'),
+    State('marker-positions', 'data'),
+    State('graph-mode', 'data'),
+    prevent_initial_call=True
+)
+def draw_vertical_line(clickData, marker_positions, graph_mode):
+    """ Callback to update marker positions on stock chart
+    Functions updates Marker1 and Marker2 positions in dcc.Store(marker-position) and draws these two markers to the chart.
+    On each click on charts it toggles marker mode between Marker1 & Marker 2 to update the corresponding marker line
+
+    :param clickData: data get from mouse click on chart
+    :param marker_position: dictionary stores marker 1 & marker 2 postitions
+    :param graph_mode: dictionarty stores the grap-mode
+    return: new graph figure, updated marker positions and graph mode
+    """
+    #If callback called not because click on chart or the Marker Mode is off, simply return without doing anything
+    if clickData is None or graph_mode['marker_mode'] == None:
+        return dash.no_update, dash.no_update, dash.no_update, marker_positions, graph_mode
+
+    #Gets the date to the mouse click position
+    date_clicked = clickData['points'][0]['x']
+
+    
+    if graph_mode['marker_mode'] == 'Marker1':
+        #if current Marker mode is Marker1 -> Update Marker 1 position and change the mode to Marker 2
+        marker_positions['marker1'] = date_clicked
+        graph_mode['marker_mode'] = 'Marker2'
+    else:
+        #if current Marker mode is Marker2 -> Update Marker 2 position and change the mode to Marker 1
+        marker_positions['marker2'] = date_clicked
+        graph_mode['marker_mode'] = 'Marker1'
+
+    # Make a copy of figures
+    fig_stock = go.Figure(candlestick_fig)
+    fig_rsi = go.Figure(rsi_fig)
+    fig_macd = go.Figure(macd_fig)
+
+    #Remove markers from figure if there is any
+    remove_markers_from_figure(fig_stock)
+
+    #Add markers to charts
+    add_markers_to_figure(fig_stock, marker_positions)
+    add_markers_to_figure(fig_rsi, marker_positions)
+    add_markers_to_figure(fig_macd, marker_positions)
+
+    return fig_stock, fig_rsi, fig_macd, marker_positions, graph_mode
+
+#===================================================================================
+
+@app.callback(
+    Output('stock-chart', 'figure', allow_duplicate= True),
+    Output('rsi-chart', 'figure', allow_duplicate= True),
+    Output('macd-chart', 'figure', allow_duplicate= True),
+    Output('marker-positions', 'data', allow_duplicate= True),
+    Output('indicator-checklist', 'value'),
     Input('stock-dropdown', 'value'),
-    Input('indicator-checklist', 'value'),
-    Input('date-range-slider', 'value'),
+    State('marker-positions', 'data'),
+    State('indicator-checklist', 'value'),
+    prevent_initial_call=True
 )
-def update_chart(stock_item, indicators_selected, slider_value):
-
+def update_chart(stock_item, marker_positions, indicator_checklist):
     global current_stock, candlestick_fig, rsi_fig, macd_fig, stock, previous_range_slider_value, trendline_pronogation
-
-    update_trendlines = False #Flag to indicate if trendlines data needs to be recalculated and added as a new trace to chart
-
 
     if stock_item != current_stock:
         logger.debug(f"Create new stock object for {stock_item} for period {stock_item}")
@@ -453,113 +510,56 @@ def update_chart(stock_item, indicators_selected, slider_value):
         cp_stock_fig = create_candlestick_figure(stock)
         cp_rsi_fig = create_rsi_figure(stock, 'RSI (14)')
         cp_macd_fig = create_macd_figure(stock, 'MACD (12, 26, 9)') 
-        #if new stock selected, reset the range slider indexes.
-        start_idx = 0
-        end_idx = stock.get_number_of_idx() - 1
-    else:
-        # If the stock is the same, use the existing figures
-        cp_stock_fig = go.Figure(candlestick_fig)  # Create a copy to avoid modifying the original
-        cp_rsi_fig = go.Figure(rsi_fig) # Create a copy to avoid modifying the original
-        cp_macd_fig = go.Figure(macd_fig) # Create a copy to avoid modifying the original
-        # if no new stock selected, get range slider values
-        start_idx, end_idx = slider_value
+
+        candlestick_fig = cp_stock_fig
+        rsi_fig = cp_rsi_fig
+        macd_fig = cp_macd_fig
+
+        #For new figure delete the markers
+        marker_positions['marker1'] = None
+        marker_positions['marker2'] = None
+
+    return candlestick_fig, rsi_fig, macd_fig, marker_positions, indicator_checklist
+
+
+# ================================ Callback to update the charts ======================
+@app.callback(
+    Output('stock-chart', 'figure', allow_duplicate= True),
+    Input('indicator-checklist', 'value'),
+    State('marker-positions', 'data'),
+    prevent_initial_call=True
+)
+def update_chart(indicators_selected, marker_positions):
+
+    global current_stock, candlestick_fig, rsi_fig, macd_fig, stock, previous_range_slider_value, trendline_pronogation
+
+    update_trendlines = False #Flag to indicate if trendlines data needs to be recalculated and added as a new trace to chart
+
+    # If the stock is the same, use the existing figures
+    cp_stock_fig = go.Figure(candlestick_fig)  # Create a copy to avoid modifying the original
+    cp_rsi_fig = go.Figure(rsi_fig) # Create a copy to avoid modifying the original
+    cp_macd_fig = go.Figure(macd_fig) # Create a copy to avoid modifying the original
  
-    
-    start_date = stock.get_indexes()[start_idx]
-    end_date = stock.get_indexes()[end_idx]
-
-    # Recalculate range slider values and marks -> this is needed because new stock data may have different index count, therefore range slider shall be updated according to this
-    range_slider_value = [start_idx, end_idx]
-    range_slider_marks = {i: stock.get_indexes()[i].strftime('%Y-%m-%d') for i in range(0, stock.get_number_of_idx(), max(1, stock.get_number_of_idx()//10))}
-
-    #Check if range slider value has changed
-    if previous_range_slider_value != range_slider_value:
-        # Update elements which are affected by the range slider value change. e.g.: Range markers on charts and trendlines and datevalues in date pickers
+    if marker_positions['marker1'] != None and marker_positions['marker2'] != None:
+        if marker_positions['marker1'] < marker_positions['marker2']:
+            start_date = marker_positions['marker1']
+            end_date = marker_positions['marker2']
+        else:
+            start_date = marker_positions['marker2']
+            end_date = marker_positions['marker1']
         
-        logger.debug(f"Ranger slider value changed from {previous_range_slider_value} to {range_slider_value}")
+        start_idx = stock.historical_data.index.get_loc(start_date)
+        end_idx = stock.historical_data.index.get_loc(end_date)
+    else:
+        start_idx = 0
+        end_idx = stock.get_number_of_idx() - 1   
+        start_date = stock.get_indexes()[start_idx]
+        end_date = stock.get_indexes()[end_idx]
 
-        # Check if Trendline were already calculated, update it only when it was shown on the chart at least once -> Performance optimization
-
-        if (stock.trendline is not None):
-            # Signalize to recalculate the trendlines later in this function
-            update_trendlines = True
-
-        # Update RSI chart with the selected date range lines
-        cp_rsi_fig.update_layout(shapes=[
-            dict(
-                type="line",
-                xref="x",
-                yref="paper",
-                x0=start_date,
-                x1=start_date,
-                y0=0,
-                y1=1,
-                line=dict(color="blue", width=1, dash="dot"),
-            ),
-            dict(
-                type="line",
-                xref="x",
-                yref="paper",
-                x0=end_date,
-                x1=end_date,
-                y0=0,
-                y1=1,
-                line=dict(color="blue", width=1, dash="dot"),
-            ),
-        ])
-
-        # Update MACD chart with the selected date range lines
-        cp_macd_fig.update_layout(shapes=[
-            dict(
-                type="line",
-                xref="x",
-                yref="paper",
-                x0=start_date,
-                x1=start_date,
-                y0=0,
-                y1=1,
-                line=dict(color="blue", width=1, dash="dot"),
-            ),
-            dict(
-                type="line",
-                xref="x",
-                yref="paper",
-                x0=end_date,
-                x1=end_date,
-                y0=0,
-                y1=1,
-                line=dict(color="blue", width=1, dash="dot"),
-            ),
-        ])
-    
-        #update candlestick chart with the selected date range lines
-        cp_stock_fig.update_layout(
-            title=f"{stock.name} Stock Price - Last {stock.period}",
-            shapes=[
-                dict(
-                    type="line",
-                    xref="x",
-                    yref="paper",
-                    x0=start_date,
-                    x1=start_date,
-                    y0=0,
-                    y1=1,
-                    line=dict(color="blue", width=1, dash="dot"),
-                ),
-                dict(
-                    type="line",
-                    xref="x",
-                    yref="paper",
-                    x0=end_date,
-                    x1=end_date,
-                    y0=0,
-                    y1=1,
-                    line=dict(color="blue", width=1, dash="dot"),
-                ),
-            ]
-        )
-
-        previous_range_slider_value = range_slider_value # Update the previous range slider value to the current one
+    # Remove the vertical line (all shapes from figure)
+    remove_markers_from_figure(cp_stock_fig)
+    # Add markers to stock figure
+    add_markers_to_figure(cp_stock_fig, marker_positions)
 
     logger.debug(f"Indicators selected: {indicators_selected}")
 
@@ -729,7 +729,7 @@ def update_chart(stock_item, indicators_selected, slider_value):
     rsi_fig = cp_rsi_fig
     macd_fig = cp_macd_fig
 
-    return cp_stock_fig, cp_rsi_fig, cp_macd_fig, stock.get_number_of_idx(), range_slider_value, range_slider_marks, start_date, end_date
+    return cp_stock_fig #, cp_rsi_fig, cp_macd_fig,
 
 
 
